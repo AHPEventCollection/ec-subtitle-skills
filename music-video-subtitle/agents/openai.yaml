@@ -1,0 +1,4 @@
+interface:
+  display_name: "单曲MV双语字幕"
+  short_description: "官方字幕优先的MV双语字幕与发布包"
+  default_prompt: "使用$music-video-subtitle完成这支MV：先检查上传方官方字幕，有则锁定其正文和时间轴并逐条填写中文，没有且已有歌词时运行可续跑build-candidate生成纯SOFA候选，MC和自然口语才使用Whisper；预览把完整源视频与同名外挂ASS放在同一目录，不重新编码也不封装字幕轨，我确认后再压制、验收并准备四平台发布包"

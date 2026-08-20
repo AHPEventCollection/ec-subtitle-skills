@@ -1,0 +1,124 @@
+{
+  "schema": "ec-subtitle-runtime-requirements/v1",
+  "skill": "music-video-subtitle",
+  "executables": ["ffmpeg", "ffprobe"],
+  "javascript": {
+    "accepted": {
+      "deno": {"minimum": [2, 3]},
+      "node": {"minimum": [22, 0]}
+    }
+  },
+  "tools": [
+    {
+      "display_name": "FFmpeg与ffprobe",
+      "names": ["ffmpeg", "ffprobe"],
+      "estimated_bytes": 450000000,
+      "source": "https://ffmpeg.org/download.html",
+      "destination": "bin"
+    },
+    {
+      "display_name": "YouTube JavaScript运行时",
+      "names": ["javascript"],
+      "estimated_bytes": 120000000,
+      "source": "https://github.com/yt-dlp/yt-dlp/wiki/EJS",
+      "destination": "bin",
+      "alternatives": ["Deno>=2.3", "Node>=22"]
+    }
+  ],
+  "tasks": {
+    "default": {"profiles": ["base"]},
+    "youtube-download": {"profiles": ["base"], "executables": ["javascript"]},
+    "official-subtitle": {"profiles": ["base"]},
+    "song": {"profiles": ["base", "separator", "sofa"]},
+    "whisper": {"profiles": ["base", "whisper"]},
+    "compare": {"profiles": ["base", "separator", "sofa", "whisper"]}
+  },
+  "profiles": {
+    "base": {
+      "python_min": [3, 10],
+      "python_max_exclusive": [3, 15],
+      "imports": ["PIL", "pykakasi", "yt_dlp", "yt_dlp_ejs"],
+      "artifacts": [],
+      "install": {
+        "display_name": "MV基础图像处理Profile",
+        "estimated_bytes": 50000000,
+        "python_packages": "requirements-base.txt",
+        "assets": []
+      }
+    },
+    "whisper": {
+      "python_min": [3, 10],
+      "python_max_exclusive": [3, 15],
+      "imports": ["faster_whisper", "ctranslate2", "numpy", "pysubs2", "srt"],
+      "artifacts": [
+        {"key": "whisper_model", "kind": "directory"}
+      ],
+      "install": {
+        "display_name": "Whisper口语识别Profile",
+        "estimated_bytes": 3500000000,
+        "python_packages": "requirements-whisper.txt",
+        "assets": [
+          {
+            "name": "Systran/faster-whisper-large-v3",
+            "source": "https://huggingface.co/Systran/faster-whisper-large-v3",
+            "revision": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+            "estimated_bytes": 3090840219
+          }
+        ]
+      }
+    },
+    "separator": {
+      "python_min": [3, 10],
+      "python_max_exclusive": [3, 11],
+      "imports": ["audio_separator", "torch", "onnxruntime", "numpy"],
+      "artifacts": [
+        {"key": "separator_model", "kind": "file"}
+      ],
+      "install": {
+        "display_name": "BS-RoFormer人声分离Profile",
+        "estimated_bytes": 6000000000,
+        "python_packages": "requirements-separator.txt",
+        "assets": [
+          {
+            "name": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+            "source": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+            "estimated_bytes": 639331213
+          },
+          {
+            "name": "model_bs_roformer_ep_317_sdr_12.9755.yaml",
+            "source": "https://raw.githubusercontent.com/TRvlvr/application_data/main/mdx_model_data/mdx_c_configs/model_bs_roformer_ep_317_sdr_12.9755.yaml",
+            "estimated_bytes": 2273
+          }
+        ]
+      }
+    },
+    "sofa": {
+      "python_min": [3, 10],
+      "python_max_exclusive": [3, 11],
+      "imports": ["onnxruntime", "torch", "torchaudio", "numba", "librosa", "textgrid", "yaml", "click"],
+      "artifacts": [
+        {"key": "sofa_model", "kind": "file"},
+        {"key": "sofa_tool", "kind": "directory"}
+      ],
+      "install": {
+        "display_name": "SOFA日语歌声对齐Profile",
+        "estimated_bytes": 2500000000,
+        "python_packages": "requirements-sofa.txt",
+        "assets": [
+          {
+            "name": "SOFA源码",
+            "source": "https://github.com/qiuqiao/SOFA/archive/5135300b8714452a39400edb1f757d14e5cca019.zip",
+            "revision": "5135300b8714452a39400edb1f757d14e5cca019",
+            "estimated_bytes": 646709
+          },
+          {
+            "name": "akm_ja_v001.zip",
+            "source": "https://github.com/ariikamusic/SOFA_Models/releases/download/akm_ja_v001/akm_ja_v001.zip",
+            "estimated_bytes": 377869091,
+            "retain": ["config.yaml", "dict.txt", "model.onnx", "readme.txt"]
+          }
+        ]
+      }
+    }
+  }
+}
