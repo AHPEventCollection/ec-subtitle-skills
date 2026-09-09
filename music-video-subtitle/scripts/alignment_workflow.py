@@ -8,7 +8,13 @@ import subprocess
 import unicodedata
 from pathlib import Path
 
-from common import ensure_workspace, find_source_video, probe_media, resolve_binary, write_text
+from common import (
+    ensure_workspace,
+    find_source_video,
+    probe_media,
+    resolve_binary,
+    write_text,
+)
 from lyrics_source import is_metadata, parse_lrc
 from subtitle_io import Cue, load_cues, render_srt, validate_cues
 
@@ -20,7 +26,9 @@ TIME_FIELD_NAMES = {"time", "start", "end", "timestamp", "lrc_start", "lrc_end"}
 SUSPICIOUS_TEXT = re.compile(r"[A-Za-z0-9]")
 RUBY_LIKE_TEXT = re.compile(r"[一-龥々〆ヵヶ]+[ /／]+[ァ-ヶー]+")
 SOFA_SILENCE_LABELS = {"AP", "SP"}
-COMMON_READINGS_FILE = Path(__file__).resolve().parents[1] / "references" / "common-readings.tsv"
+COMMON_READINGS_FILE = (
+    Path(__file__).resolve().parents[1] / "references" / "common-readings.tsv"
+)
 
 
 def _load_common_readings() -> dict[str, str]:
@@ -42,41 +50,138 @@ PRONOUN_KIMI = re.compile(
 )
 
 KANA = {
-    "あ": ("a",), "い": ("i",), "う": ("u",), "え": ("e",), "お": ("o",),
-    "か": ("k", "a"), "き": ("k", "i"), "く": ("k", "u"), "け": ("k", "e"), "こ": ("k", "o"),
-    "さ": ("s", "a"), "し": ("sh", "i"), "す": ("s", "u"), "せ": ("s", "e"), "そ": ("s", "o"),
-    "た": ("t", "a"), "ち": ("ch", "i"), "つ": ("ts", "u"), "て": ("t", "e"), "と": ("t", "o"),
-    "な": ("n", "a"), "に": ("n", "i"), "ぬ": ("n", "u"), "ね": ("n", "e"), "の": ("n", "o"),
-    "は": ("h", "a"), "ひ": ("h", "i"), "ふ": ("f", "u"), "へ": ("h", "e"), "ほ": ("h", "o"),
-    "ま": ("m", "a"), "み": ("m", "i"), "む": ("m", "u"), "め": ("m", "e"), "も": ("m", "o"),
-    "や": ("y", "a"), "ゆ": ("y", "u"), "よ": ("y", "o"),
-    "ら": ("r", "a"), "り": ("r", "i"), "る": ("r", "u"), "れ": ("r", "e"), "ろ": ("r", "o"),
-    "わ": ("w", "a"), "ゐ": ("i",), "ゑ": ("e",), "を": ("o",),
-    "が": ("g", "a"), "ぎ": ("g", "i"), "ぐ": ("g", "u"), "げ": ("g", "e"), "ご": ("g", "o"),
-    "ざ": ("z", "a"), "じ": ("j", "i"), "ず": ("z", "u"), "ぜ": ("z", "e"), "ぞ": ("z", "o"),
-    "だ": ("d", "a"), "ぢ": ("j", "i"), "づ": ("z", "u"), "で": ("d", "e"), "ど": ("d", "o"),
-    "ば": ("b", "a"), "び": ("b", "i"), "ぶ": ("b", "u"), "べ": ("b", "e"), "ぼ": ("b", "o"),
-    "ぱ": ("p", "a"), "ぴ": ("p", "i"), "ぷ": ("p", "u"), "ぺ": ("p", "e"), "ぽ": ("p", "o"),
-    "ゔ": ("v", "u"), "ん": ("N",), "っ": ("cl",),
-    "ぁ": ("a",), "ぃ": ("i",), "ぅ": ("u",), "ぇ": ("e",), "ぉ": ("o",),
+    "あ": ("a",),
+    "い": ("i",),
+    "う": ("u",),
+    "え": ("e",),
+    "お": ("o",),
+    "か": ("k", "a"),
+    "き": ("k", "i"),
+    "く": ("k", "u"),
+    "け": ("k", "e"),
+    "こ": ("k", "o"),
+    "さ": ("s", "a"),
+    "し": ("sh", "i"),
+    "す": ("s", "u"),
+    "せ": ("s", "e"),
+    "そ": ("s", "o"),
+    "た": ("t", "a"),
+    "ち": ("ch", "i"),
+    "つ": ("ts", "u"),
+    "て": ("t", "e"),
+    "と": ("t", "o"),
+    "な": ("n", "a"),
+    "に": ("n", "i"),
+    "ぬ": ("n", "u"),
+    "ね": ("n", "e"),
+    "の": ("n", "o"),
+    "は": ("h", "a"),
+    "ひ": ("h", "i"),
+    "ふ": ("f", "u"),
+    "へ": ("h", "e"),
+    "ほ": ("h", "o"),
+    "ま": ("m", "a"),
+    "み": ("m", "i"),
+    "む": ("m", "u"),
+    "め": ("m", "e"),
+    "も": ("m", "o"),
+    "や": ("y", "a"),
+    "ゆ": ("y", "u"),
+    "よ": ("y", "o"),
+    "ら": ("r", "a"),
+    "り": ("r", "i"),
+    "る": ("r", "u"),
+    "れ": ("r", "e"),
+    "ろ": ("r", "o"),
+    "わ": ("w", "a"),
+    "ゐ": ("i",),
+    "ゑ": ("e",),
+    "を": ("o",),
+    "が": ("g", "a"),
+    "ぎ": ("g", "i"),
+    "ぐ": ("g", "u"),
+    "げ": ("g", "e"),
+    "ご": ("g", "o"),
+    "ざ": ("z", "a"),
+    "じ": ("j", "i"),
+    "ず": ("z", "u"),
+    "ぜ": ("z", "e"),
+    "ぞ": ("z", "o"),
+    "だ": ("d", "a"),
+    "ぢ": ("j", "i"),
+    "づ": ("z", "u"),
+    "で": ("d", "e"),
+    "ど": ("d", "o"),
+    "ば": ("b", "a"),
+    "び": ("b", "i"),
+    "ぶ": ("b", "u"),
+    "べ": ("b", "e"),
+    "ぼ": ("b", "o"),
+    "ぱ": ("p", "a"),
+    "ぴ": ("p", "i"),
+    "ぷ": ("p", "u"),
+    "ぺ": ("p", "e"),
+    "ぽ": ("p", "o"),
+    "ゔ": ("v", "u"),
+    "ん": ("N",),
+    "っ": ("cl",),
+    "ぁ": ("a",),
+    "ぃ": ("i",),
+    "ぅ": ("u",),
+    "ぇ": ("e",),
+    "ぉ": ("o",),
 }
 
 YOON = {
-    "きゃ": ("ky", "a"), "きゅ": ("ky", "u"), "きょ": ("ky", "o"),
-    "しゃ": ("sh", "a"), "しゅ": ("sh", "u"), "しょ": ("sh", "o"),
-    "ちゃ": ("ch", "a"), "ちゅ": ("ch", "u"), "ちょ": ("ch", "o"),
-    "にゃ": ("ny", "a"), "にゅ": ("ny", "u"), "にょ": ("ny", "o"),
-    "ひゃ": ("hy", "a"), "ひゅ": ("hy", "u"), "ひょ": ("hy", "o"),
-    "みゃ": ("my", "a"), "みゅ": ("my", "u"), "みょ": ("my", "o"),
-    "りゃ": ("ry", "a"), "りゅ": ("ry", "u"), "りょ": ("ry", "o"),
-    "ぎゃ": ("gy", "a"), "ぎゅ": ("gy", "u"), "ぎょ": ("gy", "o"),
-    "じゃ": ("j", "a"), "じゅ": ("j", "u"), "じょ": ("j", "o"),
-    "びゃ": ("by", "a"), "びゅ": ("by", "u"), "びょ": ("by", "o"),
-    "ぴゃ": ("py", "a"), "ぴゅ": ("py", "u"), "ぴょ": ("py", "o"),
-    "ふぁ": ("f", "a"), "ふぃ": ("f", "i"), "ふぇ": ("f", "e"), "ふぉ": ("f", "o"),
-    "てぃ": ("ty", "i"), "でぃ": ("dy", "i"), "つぁ": ("ts", "a"), "つぃ": ("ts", "i"),
-    "つぇ": ("ts", "e"), "つぉ": ("ts", "o"), "うぃ": ("w", "i"), "うぇ": ("w", "e"),
-    "うぉ": ("w", "o"), "ゔぁ": ("v", "a"), "ゔぃ": ("v", "i"), "ゔぇ": ("v", "e"),
+    "きゃ": ("ky", "a"),
+    "きゅ": ("ky", "u"),
+    "きょ": ("ky", "o"),
+    "しゃ": ("sh", "a"),
+    "しゅ": ("sh", "u"),
+    "しょ": ("sh", "o"),
+    "ちゃ": ("ch", "a"),
+    "ちゅ": ("ch", "u"),
+    "ちょ": ("ch", "o"),
+    "にゃ": ("ny", "a"),
+    "にゅ": ("ny", "u"),
+    "にょ": ("ny", "o"),
+    "ひゃ": ("hy", "a"),
+    "ひゅ": ("hy", "u"),
+    "ひょ": ("hy", "o"),
+    "みゃ": ("my", "a"),
+    "みゅ": ("my", "u"),
+    "みょ": ("my", "o"),
+    "りゃ": ("ry", "a"),
+    "りゅ": ("ry", "u"),
+    "りょ": ("ry", "o"),
+    "ぎゃ": ("gy", "a"),
+    "ぎゅ": ("gy", "u"),
+    "ぎょ": ("gy", "o"),
+    "じゃ": ("j", "a"),
+    "じゅ": ("j", "u"),
+    "じょ": ("j", "o"),
+    "びゃ": ("by", "a"),
+    "びゅ": ("by", "u"),
+    "びょ": ("by", "o"),
+    "ぴゃ": ("py", "a"),
+    "ぴゅ": ("py", "u"),
+    "ぴょ": ("py", "o"),
+    "ふぁ": ("f", "a"),
+    "ふぃ": ("f", "i"),
+    "ふぇ": ("f", "e"),
+    "ふぉ": ("f", "o"),
+    "てぃ": ("ty", "i"),
+    "でぃ": ("dy", "i"),
+    "つぁ": ("ts", "a"),
+    "つぃ": ("ts", "i"),
+    "つぇ": ("ts", "e"),
+    "つぉ": ("ts", "o"),
+    "うぃ": ("w", "i"),
+    "うぇ": ("w", "e"),
+    "うぉ": ("w", "o"),
+    "ゔぁ": ("v", "a"),
+    "ゔぃ": ("v", "i"),
+    "ゔぇ": ("v", "e"),
     "ゔぉ": ("v", "o"),
 }
 
@@ -114,7 +219,9 @@ def _roles(path: Path, count: int) -> list[str]:
     return roles
 
 
-def _write_text_if_changed(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+def _write_text_if_changed(
+    path: Path, content: str, *, encoding: str = "utf-8"
+) -> None:
     if path.is_file() and path.read_text(encoding=encoding) == content:
         return
     path.write_text(content, encoding=encoding, newline="\n")
@@ -137,7 +244,9 @@ def _common_reading_hits(text: str) -> list[str]:
     return hits
 
 
-def _pronunciation_overrides(path: Path, lyrics: list[str]) -> dict[int, dict[str, str]]:
+def _pronunciation_overrides(
+    path: Path, lyrics: list[str]
+) -> dict[int, dict[str, str]]:
     if not path.is_file():
         return {}
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -152,7 +261,9 @@ def _pronunciation_overrides(path: Path, lyrics: list[str]) -> dict[int, dict[st
             raise ValueError(f"pronunciation-overrides.tsv行号越界：{line}")
         japanese = (row.get("japanese") or "").strip()
         if japanese != lyrics[line - 1]:
-            raise ValueError(f"pronunciation-overrides.tsv第{line}行正文与当前歌词不一致")
+            raise ValueError(
+                f"pronunciation-overrides.tsv第{line}行正文与当前歌词不一致"
+            )
         reading = (row.get("reading") or row.get("confirmed_reading") or "").strip()
         if not reading:
             raise ValueError(f"pronunciation-overrides.tsv第{line}行缺少reading")
@@ -161,7 +272,9 @@ def _pronunciation_overrides(path: Path, lyrics: list[str]) -> dict[int, dict[st
         overrides[line] = {
             "japanese": japanese,
             "reading": reading,
-            "reason": (row.get("reason") or row.get("evidence") or "逐曲稀疏覆盖").strip(),
+            "reason": (
+                row.get("reason") or row.get("evidence") or "逐曲稀疏覆盖"
+            ).strip(),
         }
     return overrides
 
@@ -185,7 +298,14 @@ def _phones(reading: str) -> list[str]:
             index += 2
             continue
         if char == "ー":
-            vowel = next((item for item in reversed(phones) if item in {"a", "i", "u", "e", "o"}), None)
+            vowel = next(
+                (
+                    item
+                    for item in reversed(phones)
+                    if item in {"a", "i", "u", "e", "o"}
+                ),
+                None,
+            )
             if vowel is None:
                 raise ValueError(f"长音符前没有元音：{reading}")
             phones.append(vowel)
@@ -211,7 +331,9 @@ def prepare_alignment(mv_dir: Path) -> Path:
     japanese = _lyric_text(japanese_path)
     chinese = _lyric_text(chinese_path)
     if not japanese or len(japanese) != len(chinese):
-        raise ValueError(f"日中歌词行数必须相同且非空：日文{len(japanese)}行，中文{len(chinese)}行")
+        raise ValueError(
+            f"日中歌词行数必须相同且非空：日文{len(japanese)}行，中文{len(chinese)}行"
+        )
     roles = _roles(mv_dir / "lyrics" / "roles.tsv", len(japanese))
     overrides = _pronunciation_overrides(
         mv_dir / "lyrics" / "pronunciation-overrides.tsv", japanese
@@ -220,7 +342,9 @@ def prepare_alignment(mv_dir: Path) -> Path:
     all_song_phones: list[str] = []
     suspicious: list[tuple[int, str, str]] = []
     applied: list[dict[str, str]] = []
-    for line_number, (ja, zh, role) in enumerate(zip(japanese, chinese, roles), start=1):
+    for line_number, (ja, zh, role) in enumerate(
+        zip(japanese, chinese, roles), start=1
+    ):
         reading = ""
         phones: list[str] = []
         if role == "song":
@@ -361,7 +485,9 @@ def build_sofa_candidate(mv_dir: Path, htk_path: Path | None = None) -> Path:
         mismatch = next(
             (
                 index
-                for index, pair in enumerate(zip(actual_phones, expected_phones), start=1)
+                for index, pair in enumerate(
+                    zip(actual_phones, expected_phones), start=1
+                )
                 if pair[0] != pair[1]
             ),
             None,
@@ -454,7 +580,10 @@ def _probe_duration(source: Path, ffprobe_value: str | None = None) -> float:
     except ValueError as error:
         raise ValueError(f"无法读取媒体时长：{source}") from error
 
-def preflight_alignment(mv_dir: Path, mode: str = "sofa", ffprobe_value: str | None = None) -> Path:
+
+def preflight_alignment(
+    mv_dir: Path, mode: str = "sofa", ffprobe_value: str | None = None
+) -> Path:
     mode = mode.casefold()
     if mode not in VALID_MODES:
         raise ValueError(f"对齐模式非法：{mode}")
@@ -478,7 +607,9 @@ def preflight_alignment(mv_dir: Path, mode: str = "sofa", ffprobe_value: str | N
         source = find_source_video(mv_dir)
         vocals = mv_dir / "work" / "vocals.wav"
         if not vocals.is_file():
-            raise FileNotFoundError("SOFA或组合模式要求work/vocals.wav，人声分离失败时禁止退回原始混音")
+            raise FileNotFoundError(
+                "SOFA或组合模式要求work/vocals.wav，人声分离失败时禁止退回原始混音"
+            )
         if vocals.resolve() == source.resolve():
             raise ValueError("分离人声不能与源视频指向同一文件")
         source_info = probe_media(source, ffprobe_value)

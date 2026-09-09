@@ -17,6 +17,7 @@ from runtime_manager import (
     component_status,
     discover_roots,
     javascript_runtime,
+    profile_environment,
 )
 
 
@@ -45,7 +46,10 @@ class RuntimeComponentTests(unittest.TestCase):
                 "separator_cuda": {"ok": True, "cuda_available": True},
                 "sofa_onnx": {
                     "ok": True,
-                    "session_providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+                    "session_providers": [
+                        "CUDAExecutionProvider",
+                        "CPUExecutionProvider",
+                    ],
                     "cuda_error": None,
                 },
             }
@@ -85,9 +89,7 @@ class RuntimeComponentTests(unittest.TestCase):
                 }
             }
             descriptor = javascript_runtime(root, manifest)
-            requirements = {
-                "javascript": {"accepted": {"node": {"minimum": [22, 0]}}}
-            }
+            requirements = {"javascript": {"accepted": {"node": {"minimum": [22, 0]}}}}
             with patch(
                 "runtime_manager.command_probe",
                 return_value={"ok": True, "version_line": "v24.19.0"},
@@ -104,6 +106,25 @@ class RuntimeComponentTests(unittest.TestCase):
             self.assertTrue(probes["javascript"]["ok"])
             self.assertTrue(probes["javascript"]["version_ok"])
             self.assertEqual("node", probes["javascript"]["kind"])
+
+    def test_profile_environment_drops_inherited_pythonpath(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            separator = root / "separator"
+            separator.mkdir()
+            manifest = {
+                "profiles": {
+                    "base": {"python_deps": "base-deps"},
+                    "separator": {},
+                },
+                "shared": {},
+            }
+            with patch.dict(
+                os.environ, {"PYTHONPATH": str(root / "base-deps")}, clear=False
+            ):
+                env = profile_environment(root, manifest, "separator")
+
+            self.assertNotIn("PYTHONPATH", env)
 
 
 if __name__ == "__main__":

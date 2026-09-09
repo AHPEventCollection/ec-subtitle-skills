@@ -16,6 +16,9 @@ sys.path.insert(0, str(SCRIPTS))
 
 from lyrics_source import (
     choose_candidate,
+    clean_workspace_title,
+    clean_workspace_artist,
+    fetch_for_workspace,
     fetch_netease_bilingual,
     inspect_candidates,
     translation_coverage,
@@ -23,6 +26,41 @@ from lyrics_source import (
 
 
 class LyricsSourceTests(unittest.TestCase):
+    def test_cleans_artist_and_live_suffix_from_youtube_title(self) -> None:
+        self.assertEqual(
+            "真夏の夜の匂いがする",
+            clean_workspace_title(
+                'あいみょん - 真夏の夜の匂いがする from AIMYON TOUR 2020 "ミート・ミート"'
+            ),
+        )
+
+    def test_cleans_slash_artist_and_mid_title_official_live_suffix(self) -> None:
+        self.assertEqual(
+            "何億分の1を",
+            clean_workspace_title(
+                "yosugala / 何億分の1を【official Live Video】"
+                "yosugala 3rd anniversary live"
+            ),
+        )
+
+    def test_cleans_quoted_title_and_channel_without_changing_evidence(self) -> None:
+        self.assertEqual("霞日和", clean_workspace_title("コブクロ「霞日和」Full Ver."))
+        self.assertEqual("コブクロ", clean_workspace_artist("コブクロ 公式チャンネル"))
+        self.assertEqual("Artist", clean_workspace_artist("Artist Official YouTube Channel"))
+        self.assertEqual("Artist", clean_workspace_artist("Artist - Topic"))
+        self.assertEqual("Official髭男dism", clean_workspace_artist("Official髭男dism"))
+        self.assertEqual("「愛」の歌", clean_workspace_title("「愛」の歌"))
+        with tempfile.TemporaryDirectory() as temporary:
+            mv = Path(temporary)
+            (mv / "source").mkdir()
+            title = "コブクロ「霞日和」Full Ver."
+            (mv / "source/title.txt").write_text(title, encoding="utf-8")
+            (mv / "source/artist.txt").write_text("コブクロ 公式チャンネル", encoding="utf-8")
+            with patch("lyrics_source.fetch_netease_bilingual") as fetch:
+                fetch_for_workspace(mv)
+                fetch.assert_called_once_with("霞日和", "コブクロ", mv / "lyrics", cookie_file=None)
+            self.assertEqual(title, (mv / "source/title.txt").read_text(encoding="utf-8"))
+
     def test_coverage_ignores_metadata_and_ascii_chant(self) -> None:
         original = "\n".join(
             [
@@ -68,13 +106,34 @@ class LyricsSourceTests(unittest.TestCase):
         ]
         with (
             patch("lyrics_source.netease_search", return_value=songs),
-            patch("lyrics_source.netease_lyrics", side_effect=lyric_responses) as lyrics,
+            patch(
+                "lyrics_source.netease_lyrics", side_effect=lyric_responses
+            ) as lyrics,
         ):
             candidates = inspect_candidates("Song", "Artist", "cookie")
 
         self.assertEqual(5, lyrics.call_count)
         self.assertEqual(5, len(candidates))
         self.assertEqual(2, choose_candidate(candidates).song["id"])
+
+    def test_zero_match_candidates_return_none(self) -> None:
+        songs = [
+            {
+                "id": 1,
+                "name": "Unrelated",
+                "artists": [{"name": "Someone Else"}],
+            }
+        ]
+        with (
+            patch("lyrics_source.netease_search", return_value=songs),
+            patch(
+                "lyrics_source.netease_lyrics",
+                return_value={"lrc": {"lyric": "[00:01.00]原文"}},
+            ),
+        ):
+            candidates = inspect_candidates("Song", "Artist", None)
+
+        self.assertIsNone(choose_candidate(candidates))
 
     def test_failed_netease_lookup_writes_fixed_two_site_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

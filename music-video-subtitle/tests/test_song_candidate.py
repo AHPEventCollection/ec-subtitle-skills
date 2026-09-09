@@ -13,10 +13,102 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from song_candidate import _fresh, _pending_pronunciations, _sample_source_frames, _separate
+from song_candidate import (
+    _fresh,
+    _pending_pronunciations,
+    _prepare_candidate_preview,
+    _prepare_sofa,
+    _sample_source_frames,
+    _separate,
+)
 
 
 class SongCandidateTests(unittest.TestCase):
+    def test_candidate_preview_pairs_full_source_with_same_named_srt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mv_dir = Path(temporary) / "workspace" / "mvs" / "fixture"
+            source = mv_dir / "source" / "source.mkv"
+            candidate = mv_dir / "review" / "alignment" / "candidates" / "sofa-only.srt"
+            source.parent.mkdir(parents=True)
+            candidate.parent.mkdir(parents=True)
+            source.write_bytes(b"full-source")
+            candidate.write_text(
+                "\n".join(
+                    [
+                        "1",
+                        "00:00:16,312 --> 00:00:20,587",
+                        "第一句",
+                        "最初の一行",
+                        "",
+                        "2",
+                        "00:03:25,436 --> 00:03:31,000",
+                        "第二句",
+                        "次の一行",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            video, subtitle, report = _prepare_candidate_preview(
+                mv_dir, source, candidate
+            )
+
+            self.assertEqual(video.parent, subtitle.parent)
+            self.assertEqual(video.stem, subtitle.stem)
+            self.assertEqual(b"full-source", video.read_bytes())
+            self.assertEqual(candidate.read_bytes(), subtitle.read_bytes())
+            self.assertIn(
+                "播放器按同名文件自动加载SRT", report.read_text(encoding="utf-8")
+            )
+            self.assertIn("00:16.312至00:20.587", report.read_text(encoding="utf-8"))
+            self.assertIn("03:25.436至03:31.000", report.read_text(encoding="utf-8"))
+
+    def test_sofa_consumes_precomputed_phones_without_dictionary_g2p(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mv_dir = root / "workspace" / "mvs" / "fixture"
+            review = mv_dir / "review" / "alignment"
+            review.mkdir(parents=True)
+            (review / "song.lab").write_text("s a SP ts u\n", encoding="utf-8")
+            vocals = mv_dir / "work" / "vocals.wav"
+            vocals.parent.mkdir(parents=True)
+            vocals.write_bytes(b"vocals")
+            python = root / "sofa" / "python.exe"
+            model = root / "model" / "model.onnx"
+            tool = root / "tool"
+            python.parent.mkdir()
+            model.parent.mkdir()
+            tool.mkdir()
+            python.write_bytes(b"python")
+            model.write_bytes(b"model")
+            (tool / "onnx_infer.py").write_text("# fixture\n", encoding="utf-8")
+            manifest = {
+                "profiles": {
+                    "sofa": {
+                        "python": str(python),
+                        "artifacts": {
+                            "sofa_model": str(model),
+                            "sofa_tool": str(tool),
+                        },
+                    }
+                },
+                "shared": {},
+            }
+            captured: list[str] = []
+
+            def fake_run(command: list[str], **_kwargs: object) -> None:
+                captured.extend(command)
+                htk = mv_dir / "work" / "sofa-input" / "htk" / "words" / "vocals.lab"
+                htk.parent.mkdir(parents=True)
+                htk.write_text("0 1000000 s\n", encoding="utf-8")
+
+            with patch("song_candidate._run", side_effect=fake_run):
+                _prepare_sofa(mv_dir, vocals, root, manifest)
+
+            g2p_index = captured.index("--g2p")
+            self.assertEqual("None", captured[g2p_index + 1])
+
     def test_separator_uses_bound_model_without_download(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

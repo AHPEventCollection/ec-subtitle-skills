@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>发布字段隔离测试</title>
+<style>body{font:20px sans-serif;max-width:700px;margin:60px auto}input,button{font:inherit;margin:12px;padding:10px}output{display:block;padding:16px;background:#eee}</style>
+<h1>发布字段隔离测试</h1><p>没有上传、网络提交或发布按钮</p>
+<label>测试标题<input id="title" value="旧标题"></label>
+<button id="blur" type="button">移开焦点并重新渲染</button>
+<output id="status">已持久化：旧标题</output>
+<script>
+let persisted = '旧标题';
+const input = document.getElementById('title');
+const status = document.getElementById('status');
+input.addEventListener('input', () => {
+  persisted = input.value;
+  status.textContent = '已持久化：' + persisted;
+});
+document.getElementById('blur').addEventListener('click', () => {
+  input.value = persisted;
+  status.textContent = '失焦重渲染后：' + persisted;
+});
+</script></html>

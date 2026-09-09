@@ -14,9 +14,11 @@ from common import VERSION, read_required_text, write_text
 
 DEFAULT_COOKIE_FILE = Path.home() / ".codex" / "secrets" / "netease.cookie.txt"
 USER_AGENT = f"music-video-subtitle/{VERSION}"
-LRC_LINE = re.compile(r"\[(?P<minute>\d{2,3}):(?P<second>\d{2}(?:\.\d{1,3})?)\](?P<text>.*)")
+LRC_LINE = re.compile(
+    r"\[(?P<minute>\d{2,3}):(?P<second>\d{2}(?:\.\d{1,3})?)\](?P<text>.*)"
+)
 METADATA = re.compile(
-    r"^(作词|作曲|编曲|制作人|翻译|混音|母带|录音|出品|发行|吉他|贝斯|鼓|"
+    r"^(作词|作曲|编曲|制作人|翻译|混音(?:工程师|师)?|母带(?:工程师|处理)?|录音(?:工程师|师)?|出品|发行|吉他|贝斯|鼓|"
     r"詞|曲|編曲|プロデューサー|Lyrics|Composer|Arranger|Producer|Vocal)\b",
     re.IGNORECASE,
 )
@@ -68,9 +70,13 @@ def lyric_lines(value: str | None) -> list[TimedLine]:
     return [line for line in parse_lrc(value) if not is_metadata(line.text)]
 
 
-def _nearest_timestamp(target: int, timestamps: set[int], tolerance_ms: int = 350) -> int | None:
+def _nearest_timestamp(
+    target: int, timestamps: set[int], tolerance_ms: int = 350
+) -> int | None:
     candidates = [value for value in timestamps if abs(value - target) <= tolerance_ms]
-    return min(candidates, key=lambda value: abs(value - target)) if candidates else None
+    return (
+        min(candidates, key=lambda value: abs(value - target)) if candidates else None
+    )
 
 
 def translation_coverage(
@@ -116,10 +122,7 @@ def read_netease_cookie(cookie_file: Path | None = None) -> str | None:
 
 def netease_request(url: str, cookie: str | None) -> dict[str, Any]:
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
         "Referer": "https://music.163.com/",
     }
     if cookie:
@@ -148,9 +151,7 @@ def netease_lyrics(song_id: int, cookie: str | None) -> dict[str, Any]:
 
 def artists_text(song: dict[str, Any]) -> str:
     artists = song.get("artists") or song.get("ar") or []
-    return "|".join(
-        item.get("name", "") for item in artists if isinstance(item, dict)
-    )
+    return "|".join(item.get("name", "") for item in artists if isinstance(item, dict))
 
 
 def _match_score(title: str, artist: str, song: dict[str, Any]) -> int:
@@ -216,6 +217,8 @@ def choose_candidate(candidates: list[Candidate]) -> Candidate | None:
         for candidate in valid
         if candidate.match_score >= max(1, best_match - 2)
     ]
+    if not plausible:
+        return None
     return max(
         plausible,
         key=lambda candidate: (
@@ -311,7 +314,9 @@ def fetch_netease_bilingual(
             ),
         )
         fallback = write_fallback_search_plan(title, artist, out_dir)
-        raise LookupError(f"网易云前5个候选没有可用同步歌词，按固定双站方案继续：{fallback}")
+        raise LookupError(
+            f"网易云前5个候选没有可用同步歌词，按固定双站方案继续：{fallback}"
+        )
     original = (chosen.original or "").strip()
     translation = (chosen.translation or "").strip()
     write_text(out_dir / "original.lrc", original + "\n")
@@ -348,11 +353,49 @@ def fetch_for_workspace(
     mv_dir: Path,
     cookie_file: Path | None = None,
 ) -> Candidate:
-    title = read_required_text(mv_dir / "source" / "title.txt", "歌曲名")
-    artist = read_required_text(mv_dir / "source" / "artist.txt", "艺人名")
+    title = clean_workspace_title(
+        read_required_text(mv_dir / "source" / "title.txt", "歌曲名")
+    )
+    artist = clean_workspace_artist(
+        read_required_text(mv_dir / "source" / "artist.txt", "艺人名")
+    )
     return fetch_netease_bilingual(
         title,
         artist,
         mv_dir / "lyrics",
         cookie_file=cookie_file,
     )
+
+
+def clean_workspace_title(title: str) -> str:
+    value = title.strip()
+    quoted = re.fullmatch(
+        r'.*?[「『](.+?)[」』]\s*(?:(?:Full\s*Ver\.?|Official(?:\s+Music)?\s*Video|Official\s*MV|Music\s*Video|MV)\s*)?',
+        value, flags=re.IGNORECASE,
+    )
+    if quoted:
+        return quoted.group(1).strip()
+    if " - " in value:
+        prefix, remainder = value.split(" - ", 1)
+        if remainder and len(prefix) <= 40:
+            value = remainder
+    if " / " in value:
+        prefix, remainder = value.split(" / ", 1)
+        if remainder and len(prefix) <= 40:
+            value = remainder
+    value = re.split(r"\s+-?\s*from\s+", value, maxsplit=1, flags=re.IGNORECASE)[0]
+    value = re.sub(
+        r"\s*[\[(（【].*?(official|music\s*video|mv|live).*?[\])）】].*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return value.strip() or title.strip()
+
+
+def clean_workspace_artist(artist: str) -> str:
+    value = re.sub(
+        r"\s*(?:公式(?:YouTube)?チャンネル|Official\s+(?:YouTube\s+)?Channel|\s+-\s+Topic)\s*$",
+        "", artist.strip(), flags=re.IGNORECASE,
+    )
+    return value.strip() or artist.strip()

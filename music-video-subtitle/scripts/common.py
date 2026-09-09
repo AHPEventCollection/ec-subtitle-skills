@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-VERSION = "2.8.0"
+VERSION = "2.18.0"
+MP4_COPY_AUDIO = {"aac", "mp3", "alac", "ac3", "eac3"}
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 
 
@@ -42,7 +43,9 @@ class MediaInfo:
 
 def project_root() -> Path:
     configured = os.environ.get("MV_SUBTITLE_PROJECT_ROOT")
-    return Path(configured).expanduser().resolve() if configured else Path.cwd().resolve()
+    return (
+        Path(configured).expanduser().resolve() if configured else Path.cwd().resolve()
+    )
 
 
 def workspace_root() -> Path:
@@ -62,7 +65,9 @@ def validate_mv_dir(mv_dir: Path) -> Path:
             raise ValueError(f"MV工作区必须直接位于：{expected}")
         return resolved
     parent = resolved.parent
-    structured = parent.name.casefold() == "mvs" and parent.parent.name.casefold() == "workspace"
+    structured = (
+        parent.name.casefold() == "mvs" and parent.parent.name.casefold() == "workspace"
+    )
     if resolved.parent != workspace_root() and not structured:
         raise ValueError("MV工作区必须位于<项目根>/workspace/mvs/<mv-id>")
     return resolved
@@ -70,7 +75,10 @@ def validate_mv_dir(mv_dir: Path) -> Path:
 
 def project_root_for_mv(mv_dir: Path) -> Path:
     resolved = validate_mv_dir(mv_dir)
-    if resolved.parent.name.casefold() == "mvs" and resolved.parent.parent.name.casefold() == "workspace":
+    if (
+        resolved.parent.name.casefold() == "mvs"
+        and resolved.parent.parent.name.casefold() == "workspace"
+    ):
         return resolved.parent.parent.parent
     return project_root()
 
@@ -79,7 +87,10 @@ def ensure_workspace(mv_dir: Path) -> Path:
     resolved = validate_mv_dir(mv_dir)
     resolved.mkdir(parents=True, exist_ok=True)
     marker = resolved / ".mv-workspace"
-    if marker.exists() and marker.read_text(encoding="utf-8").strip() != "music-video-subtitle":
+    if (
+        marker.exists()
+        and marker.read_text(encoding="utf-8").strip() != "music-video-subtitle"
+    ):
         raise ValueError("工作区安全标记不属于music-video-subtitle")
     marker.write_text("music-video-subtitle\n", encoding="utf-8")
     for relative in ("source", "lyrics", "subtitle", "work", "review", "output"):
@@ -149,7 +160,9 @@ def find_master_subtitle(mv_dir: Path) -> Path:
         if path.is_file()
     ]
     if len(candidates) != 1:
-        raise ValueError("subtitle目录必须恰好包含一个master.srt、master.ass或master.ssa")
+        raise ValueError(
+            "subtitle目录必须恰好包含一个master.srt、master.ass或master.ssa"
+        )
     return candidates[0]
 
 

@@ -2,28 +2,35 @@
 
 ## 固定边界
 
-- 正式入口是`mv_pipeline.py download`，不得绕过它直接拼接yt-dlp命令
-- 使用运行时合同中的base Python、`yt-dlp[default]`、FFmpeg、ffprobe和JS运行时
-- 使用`--ignore-config`隔离用户级yt-dlp配置，缓存固定进入共享运行时`cache/yt-dlp/`
-- 普通公开视频不读取浏览器Cookie，不改变浏览器状态，不安装临时客户端
+- 项目正式入口仍是`mv_pipeline.py download`，它负责工作区、人工字幕侧文件、缩略图、原子落盘和取源审计
+- 实际YouTube下载只能调用系统共享`ytdlp-global --auth auto`，项目不配置或调用裸`yt-dlp`，也不自带`yt-dlp`或`yt-dlp-ejs`依赖
+- `ytdlp-global`统一解析下载器、EJS、JS运行时、FFmpeg、缓存、认证、客户端与媒体验收，项目不得重复这些策略
+- 普通公开视频先匿名下载，不读取任何浏览器状态；只有全局入口明确返回`authentication-required`时，才由全局入口切换其专用隔离登录态
+- 项目不得接收或传递浏览器Profile、Cookie文件、PO Token提供器和`player_client`参数
 - 下载先进入当前MV的`work/youtube-acquire/`，成功后原子移入`source/`，失败和成功后都清理暂存目录
+- 平台声明存在人工字幕但字幕端点暂时返回空数据时，必须在取源审计中记录字幕失败并保留已通过媒体检查的官方片源；不得把字幕失败伪装成字幕不存在，后续只能保留机器候选并在提升`master.srt`前重新核对官方字幕
 
 ## 有界策略
 
-1. 首次使用yt-dlp上游默认客户端和完整EJS挑战解析
-2. 只有格式403、缺少格式、签名或挑战解析失败时，执行一次`default,web_embedded`回退
-3. HTTP429立即停止客户端轮询，报告`rate-limited`
-4. 登录、年龄限制、会员或私有内容报告`authentication-required`
-5. 其他错误报告`fatal`并保留输出尾部，不继续猜测客户端
+1. 调用`ytdlp-global download --auth auto --require-vod --stall-timeout 90`，实时转发下载进度，不等整个进程结束才输出
+2. 全局入口先匿名下载，仅在`authentication-required`时尝试专用隔离登录态
+3. HTTP403、429、格式、挑战和认证错误均采用全局入口的分类结果，项目不轮询其他客户端
+4. 项目只在人工字幕端点失败时清空本次暂存并执行一次不含字幕侧文件的同路由媒体下载，不能借此改变认证或客户端
+5. 不得为了继续流程自动降低清晰度、改用非官方片源或读取默认浏览器Cookie
 
-`web_embedded`只作为允许嵌入视频的回退，不是永久默认客户端。不得为了继续流程自动降低清晰度、改用非官方片源或提取正在使用的浏览器Cookie库
+明确返回`video-not-ready`（首播未开始或仍在直播）时，项目每30秒通过同一命令重试，最多等待10分钟；每次等待写入取源审计，不改变认证或客户端。全局入口只在下载字节增长时刷新停滞计时，90秒无进展返回`download-stalled`并停止本次下载子进程；正常合并阶段暂停该计时。其他错误不进入首播等待循环
 
 ## 证据
 
-每次运行更新`review/source-acquisition.json`，至少记录运行时根、Python、FFmpeg、ffprobe、JS运行时、每次策略、返回码、耗时、错误分类、输出尾部和最终选择
+每次运行更新`review/source-acquisition.json`，至少记录运行时根、Python、FFmpeg、ffprobe、全局入口命令、请求及实际认证、返回码、耗时、错误分类、输出尾部和最终选择
 
 `source/source.md`只记录最终成功策略。证据文件是取源审计，不是工作流状态，也不得包含Cookie、PO Token或账户信息
 
 ## 维护
 
-客户端或挑战策略变化时先核对yt-dlp官方README、EJS说明和PO Token Guide，再修改脚本与测试并递增Skill版本。单次项目中出现的临时参数不能直接提升为永久规则
+客户端、挑战或认证策略只能在`ytdlp-global`维护；项目只在全局接口变化时同步调用、测试并递增Skill版本。单次项目中出现的临时参数不能直接提升为永久规则
+
+
+## 初次取得兼容音轨
+
+主下载保留最高4320p范围内原选视频。检测到Opus等不兼容MP4直拷贝的音轨时，同一次`download`调用内先保留原始文件到`work/youtube-original/`，再通过全局入口的MP4预设取得同视频的官方兼容音轨。补充文件的视频不用于成品；FFmpeg仅直拷贝原视频与兼容音轨。核对视频ID、尺寸、视频编码、时长和音频编码后移入source，失败保留原始文件并报告。导入用户已有片源仍只复制，不自动替换音轨

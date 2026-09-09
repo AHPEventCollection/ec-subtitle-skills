@@ -90,7 +90,9 @@ class AlignmentWorkflowTests(unittest.TestCase):
             )
             self.assertNotIn("start", header)
             self.assertNotIn("timestamp", header)
-            self.assertIn("forbidden_fields_absent　true", audit.read_text(encoding="utf-8"))
+            self.assertIn(
+                "forbidden_fields_absent　true", audit.read_text(encoding="utf-8")
+            )
 
     def test_sparse_pronunciation_override_requires_exact_lyric(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -122,7 +124,9 @@ class AlignmentWorkflowTests(unittest.TestCase):
                 candidate = build_sofa_candidate(mv_dir, htk)
 
             self.assertTrue(candidate.is_file())
-            report = candidate.with_name("sofa-conversion.md").read_text(encoding="utf-8")
+            report = candidate.with_name("sofa-conversion.md").read_text(
+                encoding="utf-8"
+            )
             self.assertIn("AP静音　1", report)
             self.assertIn("SP静音　1", report)
 
@@ -172,6 +176,7 @@ class AlignmentWorkflowTests(unittest.TestCase):
                 report = preflight_alignment(mv_dir, "sofa")
 
             self.assertIn("分离人声时长　10.000秒", report.read_text(encoding="utf-8"))
+
     def test_candidate_validation_detects_master_change(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

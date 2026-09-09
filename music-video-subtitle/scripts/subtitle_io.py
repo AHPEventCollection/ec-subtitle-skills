@@ -30,6 +30,30 @@ def _srt_seconds(value: str) -> float:
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
+def format_review_timestamp(seconds: float) -> str:
+    milliseconds = max(0, round(seconds * 1000))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, fraction = divmod(remainder, 1000)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{fraction:03d}"
+    return f"{minutes:02d}:{whole_seconds:02d}.{fraction:03d}"
+
+
+def parse_review_timestamp(value: str) -> float:
+    text = value.strip()
+    if ":" not in text:
+        return float(text)
+    parts = text.split(":")
+    if len(parts) == 2:
+        minutes, seconds = parts
+        return int(minutes) * 60 + float(seconds)
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    raise ValueError(f"非法复对时间：{value}")
+
+
 def _ass_seconds(value: str) -> float:
     match = ASS_TIME.fullmatch(value.strip())
     if not match:
@@ -65,7 +89,11 @@ def parse_srt(path: Path) -> list[Cue]:
     for block in re.split(r"\n\s*\n", text.strip()):
         lines = block.splitlines()
         time_index = next(
-            (index for index, line in enumerate(lines) if SRT_TIME.fullmatch(line.strip())),
+            (
+                index
+                for index, line in enumerate(lines)
+                if SRT_TIME.fullmatch(line.strip())
+            ),
             None,
         )
         if time_index is None:

@@ -2,12 +2,6 @@
   "schema": "ec-subtitle-runtime-requirements/v1",
   "skill": "music-video-subtitle",
   "executables": ["ffmpeg", "ffprobe"],
-  "javascript": {
-    "accepted": {
-      "deno": {"minimum": [2, 3]},
-      "node": {"minimum": [22, 0]}
-    }
-  },
   "tools": [
     {
       "display_name": "FFmpeg与ffprobe",
@@ -15,19 +9,12 @@
       "estimated_bytes": 450000000,
       "source": "https://ffmpeg.org/download.html",
       "destination": "bin"
-    },
-    {
-      "display_name": "YouTube JavaScript运行时",
-      "names": ["javascript"],
-      "estimated_bytes": 120000000,
-      "source": "https://github.com/yt-dlp/yt-dlp/wiki/EJS",
-      "destination": "bin",
-      "alternatives": ["Deno>=2.3", "Node>=22"]
     }
   ],
   "tasks": {
     "default": {"profiles": ["base"]},
-    "youtube-download": {"profiles": ["base"], "executables": ["javascript"]},
+    "media": {"profiles": ["base"]},
+    "youtube-download": {"profiles": ["base"]},
     "official-subtitle": {"profiles": ["base"]},
     "song": {"profiles": ["base", "separator", "sofa"]},
     "whisper": {"profiles": ["base", "whisper"]},
@@ -37,7 +24,7 @@
     "base": {
       "python_min": [3, 10],
       "python_max_exclusive": [3, 15],
-      "imports": ["PIL", "pykakasi", "yt_dlp", "yt_dlp_ejs"],
+      "imports": ["PIL", "pykakasi"],
       "artifacts": [],
       "install": {
         "display_name": "MV基础图像处理Profile",

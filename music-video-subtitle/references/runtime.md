@@ -3,18 +3,20 @@
 ## 固定顺序
 
 1. 先读取当前项目的`AGENTS.md`和`.subtitle-runtime.json`
-2. 运行`python scripts/runtime_manager.py doctor --project-root <项目根> --task <任务>`，读取`READY`、`DEGRADED`或`BLOCKED`
-3. 已存在可用运行时就直接复用，不下载、不创建项目内虚拟环境
-4. 只有项目绑定、环境变量和显式路径均缺失或失效时才运行`plan`，随后使用Everything核对本机是否已有同名模型、Python环境和ffmpeg
-5. 仍有缺项时，把缺少内容、预计新增空间、来源和候选安装目录一次性告诉用户并等待确认
-6. 获得确认后才安装，将环境、模型和工具写入同一个外部运行时根，更新`runtime.json`，再重新运行`doctor`
+2. 直接运行当前工序命令，由命令按实际任务自动执行最小doctor并进入绑定Profile
+3. 只有诊断失败原因时才单独运行`python scripts/runtime_manager.py doctor --project-root <项目根> --task <任务>`，读取`READY`、`DEGRADED`或`BLOCKED`
+4. 已存在可用运行时就直接复用，不下载、不创建项目内虚拟环境
+5. 只有项目绑定、环境变量和显式路径均缺失或失效时才运行`plan`，随后使用Everything核对本机是否已有同名模型、Python环境和ffmpeg
+6. 仍有缺项时，把缺少内容、预计新增空间、来源和候选安装目录一次性告诉用户并等待确认
+7. 获得确认后才安装，将环境、模型和工具写入同一个外部运行时根，更新`runtime.json`，再重新运行`doctor`
 
 `AGENTS.md`和`.subtitle-runtime.json`只是本机绑定，不是Skill可用性的前提。换到没有这些文件的机器时，`runtime_manager.py`会检查`SUBTITLE_RUNTIME_ROOT`、本机指针和Windows Everything索引，找不到时输出公开来源与安装估算
 
 ## 任务选择
 
-- `youtube-download`检查基础Pillow、pykakasi、yt-dlp、匹配的yt-dlp-ejs、ffmpeg、ffprobe及Deno>=2.3或Node>=22，不要求任何模型
-- `official-subtitle`检查基础Pillow、pykakasi、yt-dlp、yt-dlp-ejs、ffmpeg和ffprobe，不要求任何模型
+- `youtube-download`检查项目基础Pillow、pykakasi、ffmpeg和ffprobe；实际下载由系统`ytdlp-global`自行检查其独立yt-dlp、EJS及JS运行时，不要求任何模型
+- `media`检查基础Profile、ffmpeg和ffprobe，不要求任何模型，用于导入片源、样式、预览、压制和验收
+- `official-subtitle`检查基础Pillow、pykakasi、ffmpeg和ffprobe，不要求任何模型
 - `song`检查BS-RoFormer与SOFA
 - `whisper`只检查Whisper
 - `compare`检查3个Profile
@@ -35,13 +37,14 @@ subtitle-runtime/
     separator/bs-roformer-viperx-1297/
   tools/SOFA/
   bin/
-  cache/yt-dlp/
   cuda-runtime/
 ```
 
 Python环境必须隔离。SOFA当前依赖`numpy1.24`，BS-RoFormer当前依赖`numpy2.x`，不能合并为一个虚拟环境
 
-JS运行时在`runtime.json`的`shared.javascript`登记`kind`和`executable`。可以引用本机已经验证的外部Deno或Node绝对路径，不要求复制进运行时；没有登记时才检查当前`PATH`
+进入任意Profile时必须清除上一个Profile遗留的`PYTHONPATH`，只注入当前Profile声明的`python_deps`，避免不同Python ABI的NumPy或ONNXRuntime串入其他环境
+
+YouTube下载器、EJS、JS运行时和下载缓存不属于字幕运行时，由系统共享`ytdlp-global`独立维护
 
 ## 安装合同
 

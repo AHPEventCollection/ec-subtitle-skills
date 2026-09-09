@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 RUNTIME_SCHEMA = "ec-subtitle-runtime/v1"
 REQUIREMENTS_SCHEMA = "ec-subtitle-runtime-requirements/v1"
 POINTER_NAME = ".subtitle-runtime.json"
@@ -77,7 +77,9 @@ def everything_roots() -> list[Path]:
         }
     )
     try:
-        with urllib.request.urlopen(f"{EVERYTHING_URL}/?{query}", timeout=1.0) as response:
+        with urllib.request.urlopen(
+            f"{EVERYTHING_URL}/?{query}", timeout=1.0
+        ) as response:
             payload = json.load(response)
     except (OSError, ValueError, json.JSONDecodeError):
         return []
@@ -135,7 +137,9 @@ def discover_roots(
                 continue
             seen.add(key)
             valid, error = validate_runtime_root(root)
-            results.append({"source": source, "root": str(root), "valid": valid, "error": error})
+            results.append(
+                {"source": source, "root": str(root), "valid": valid, "error": error}
+            )
 
     append_candidates(raw)
     if include_everything and not any(item["valid"] for item in results):
@@ -143,11 +147,15 @@ def discover_roots(
     return results
 
 
-def choose_runtime_root(explicit: str | None, project_root: str | None) -> tuple[Path | None, list[dict[str, Any]]]:
+def choose_runtime_root(
+    explicit: str | None, project_root: str | None
+) -> tuple[Path | None, list[dict[str, Any]]]:
     candidates = discover_roots(explicit, project_root)
     if explicit:
         selected = Path(explicit).expanduser().resolve()
-        valid = any(item["valid"] and Path(item["root"]) == selected for item in candidates)
+        valid = any(
+            item["valid"] and Path(item["root"]) == selected for item in candidates
+        )
         return (selected if valid else None), candidates
     for source in ("environment", "project-pointer", "everything"):
         roots = []
@@ -174,18 +182,20 @@ def executable_path(root: Path, manifest: dict[str, Any], name: str) -> str | No
     return shutil.which(name)
 
 
-def profile_environment(root: Path, manifest: dict[str, Any], profile_name: str) -> dict[str, str]:
+def profile_environment(
+    root: Path, manifest: dict[str, Any], profile_name: str
+) -> dict[str, str]:
     profile = manifest.get("profiles", {}).get(profile_name, {})
     shared = manifest.get("shared", {})
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
     env["SUBTITLE_RUNTIME_ROOT"] = str(root)
     env["SUBTITLE_RUNTIME_PROFILE"] = profile_name
+    env.pop("PYTHONPATH", None)
 
     python_deps = resolve_relative(root, profile.get("python_deps"))
     if python_deps and python_deps.is_dir():
-        existing = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = os.pathsep.join([str(python_deps), *([existing] if existing else [])])
+        env["PYTHONPATH"] = str(python_deps)
 
     path_parts: list[str] = []
     for key in ("cuda", "bin"):
@@ -220,9 +230,15 @@ def profile_environment(root: Path, manifest: dict[str, Any], profile_name: str)
     return env
 
 
-def python_probe(python: Path, imports: list[str], env: dict[str, str]) -> dict[str, Any]:
+def python_probe(
+    python: Path, imports: list[str], env: dict[str, str]
+) -> dict[str, Any]:
     if not python.is_file():
-        return {"python_exists": False, "version": None, "imports": {name: False for name in imports}}
+        return {
+            "python_exists": False,
+            "version": None,
+            "imports": {name: False for name in imports},
+        }
     code = (
         "import importlib.util,json,sys;"
         f"mods={imports!r};"
@@ -240,7 +256,12 @@ def python_probe(python: Path, imports: list[str], env: dict[str, str]) -> dict[
         result = json.loads(completed.stdout.strip())
         result["python_exists"] = True
         return result
-    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
         return {
             "python_exists": True,
             "version": None,
@@ -249,7 +270,9 @@ def python_probe(python: Path, imports: list[str], env: dict[str, str]) -> dict[
         }
 
 
-def command_probe(command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
+def command_probe(
+    command: list[str], env: dict[str, str] | None = None
+) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             command,
@@ -300,7 +323,12 @@ def python_json_probe(python: Path, code: str, env: dict[str, str]) -> dict[str,
             "ok": False,
             "error": (error.stderr or error.stdout or str(error)).strip(),
         }
-    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
         return {"ok": False, "error": str(error)}
 
 
@@ -322,13 +350,20 @@ def component_probes(
             kind = javascript.get("kind") if javascript else None
             version = _version_tuple(probe.get("version_line", ""))
             minimum = (
-                (requirements or {}).get("javascript", {})
+                (requirements or {})
+                .get("javascript", {})
                 .get("accepted", {})
                 .get(kind or "", {})
                 .get("minimum")
             )
             version_ok = bool(version and minimum and version >= tuple(minimum[:2]))
-            probe.update({"kind": kind, "version": list(version) if version else None, "version_ok": version_ok})
+            probe.update(
+                {
+                    "kind": kind,
+                    "version": list(version) if version else None,
+                    "version_ok": version_ok,
+                }
+            )
             if probe.get("ok") and not version_ok:
                 probe["ok"] = False
                 probe["error"] = f"unsupported JavaScript runtime {kind} {version}"
@@ -350,7 +385,10 @@ def component_probes(
                 python, code, profile_environment(root, manifest, "separator")
             )
         else:
-            components["separator_cuda"] = {"ok": False, "error": "separator python not resolved"}
+            components["separator_cuda"] = {
+                "ok": False,
+                "error": "separator python not resolved",
+            }
 
     if "sofa" in profiles:
         profile = manifest.get("profiles", {}).get("sofa", {})
@@ -399,7 +437,9 @@ def component_status(components: dict[str, Any]) -> tuple[str, list[str]]:
         if name == "sofa_onnx":
             if probe.get("cuda_error"):
                 degraded = True
-                issues.append(f"sofa_onnx: CUDA initialization failed: {probe['cuda_error']}")
+                issues.append(
+                    f"sofa_onnx: CUDA initialization failed: {probe['cuda_error']}"
+                )
             elif "CUDAExecutionProvider" not in probe.get("session_providers", []):
                 degraded = True
                 issues.append("sofa_onnx: CUDA provider not active, CPU fallback only")
@@ -410,7 +450,9 @@ def component_status(components: dict[str, Any]) -> tuple[str, list[str]]:
     return "READY", issues
 
 
-def version_in_range(version: list[int] | None, minimum: list[int], maximum_exclusive: list[int]) -> bool:
+def version_in_range(
+    version: list[int] | None, minimum: list[int], maximum_exclusive: list[int]
+) -> bool:
     if not version:
         return False
     value = tuple(version[:2])
@@ -420,11 +462,17 @@ def version_in_range(version: list[int] | None, minimum: list[int], maximum_excl
 def selected_task(requirements: dict[str, Any], task_name: str) -> dict[str, Any]:
     tasks = requirements.get("tasks", {})
     if task_name not in tasks:
-        raise ValueError(f"Unknown runtime task {task_name!r}; choose from {', '.join(sorted(tasks))}")
+        raise ValueError(
+            f"Unknown runtime task {task_name!r}; choose from {', '.join(sorted(tasks))}"
+        )
     task = tasks[task_name]
     return {
         "profiles": list(task.get("profiles", [])),
-        "executables": list(dict.fromkeys([*requirements.get("executables", []), *task.get("executables", [])])),
+        "executables": list(
+            dict.fromkeys(
+                [*requirements.get("executables", []), *task.get("executables", [])]
+            )
+        ),
     }
 
 
@@ -446,10 +494,13 @@ def doctor_state(
         "skill": requirements.get("skill"),
         "task": task_name,
         "runtime_root": str(root) if root else None,
-        "requested_runtime_root": str(Path(runtime_root).expanduser().resolve()) if runtime_root else None,
+        "requested_runtime_root": str(Path(runtime_root).expanduser().resolve())
+        if runtime_root
+        else None,
         "preferred_install_root": str(preferred_root()),
         "candidates": candidates,
-        "ambiguous": root is None and sum(1 for item in candidates if item["valid"]) > 1,
+        "ambiguous": root is None
+        and sum(1 for item in candidates if item["valid"]) > 1,
         "profiles": {},
         "executables": {},
         "ready": False,
@@ -464,7 +515,11 @@ def doctor_state(
         actual = manifest.get("profiles", {}).get(profile_name, {})
         python = resolve_relative(root, actual.get("python"))
         imports = list(expected.get("imports", []))
-        probe = python_probe(python or Path(""), imports, profile_environment(root, manifest, profile_name))
+        probe = python_probe(
+            python or Path(""),
+            imports,
+            profile_environment(root, manifest, profile_name),
+        )
         version_ok = version_in_range(
             probe.get("version"),
             list(expected.get("python_min", [3, 10])),
@@ -476,11 +531,22 @@ def doctor_state(
             key = artifact["key"]
             path = resolve_relative(root, actual.get("artifacts", {}).get(key))
             kind = artifact.get("kind", "file")
-            exists = bool(path and (path.is_dir() if kind == "directory" else path.is_file()))
-            artifacts[key] = {"path": str(path) if path else None, "kind": kind, "exists": exists}
+            exists = bool(
+                path and (path.is_dir() if kind == "directory" else path.is_file())
+            )
+            artifacts[key] = {
+                "path": str(path) if path else None,
+                "kind": kind,
+                "exists": exists,
+            }
             artifacts_ready = artifacts_ready and exists
         imports_ready = all(probe.get("imports", {}).values())
-        ready = bool(probe.get("python_exists")) and version_ok and imports_ready and artifacts_ready
+        ready = (
+            bool(probe.get("python_exists"))
+            and version_ok
+            and imports_ready
+            and artifacts_ready
+        )
         profiles_ready = profiles_ready and ready
         state["profiles"][profile_name] = {
             "python": str(python) if python else None,
@@ -527,9 +593,19 @@ def doctor_state(
 def install_plan(state: dict[str, Any]) -> dict[str, Any]:
     requirements = load_requirements()
     task = selected_task(requirements, state["task"])
-    missing_profiles = [name for name in task["profiles"] if not state.get("profiles", {}).get(name, {}).get("ready")]
-    missing_executables = [name for name in task["executables"] if not state.get("executables", {}).get(name)]
-    profile_resources = [requirements["profiles"][name].get("install") for name in missing_profiles]
+    missing_profiles = [
+        name
+        for name in task["profiles"]
+        if not state.get("profiles", {}).get(name, {}).get("ready")
+    ]
+    missing_executables = [
+        name
+        for name in task["executables"]
+        if not state.get("executables", {}).get(name)
+    ]
+    profile_resources = [
+        requirements["profiles"][name].get("install") for name in missing_profiles
+    ]
     tool_resources = [
         item
         for item in requirements.get("tools", [])
@@ -539,10 +615,14 @@ def install_plan(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "skill": requirements.get("skill"),
         "task": state["task"],
-        "runtime_root": state.get("runtime_root") or state.get("requested_runtime_root") or state["preferred_install_root"],
+        "runtime_root": state.get("runtime_root")
+        or state.get("requested_runtime_root")
+        or state["preferred_install_root"],
         "missing_profiles": missing_profiles,
         "missing_executables": missing_executables,
-        "estimated_additional_bytes": sum(int(item.get("estimated_bytes", 0)) for item in resources),
+        "estimated_additional_bytes": sum(
+            int(item.get("estimated_bytes", 0)) for item in resources
+        ),
         "resources": resources,
         "requires_user_confirmation": bool(missing_profiles or missing_executables),
     }
@@ -556,7 +636,13 @@ def run_profile(args: argparse.Namespace) -> int:
         only_profile=args.profile,
     )
     if not state["ready"]:
-        print(json.dumps({"doctor": state, "plan": install_plan(state)}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"doctor": state, "plan": install_plan(state)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 2
     root = Path(state["runtime_root"])
     manifest = load_json(root / MANIFEST_NAME)
@@ -574,7 +660,11 @@ def run_profile(args: argparse.Namespace) -> int:
             script = Path(command_args[0]).expanduser()
             caller_candidate = Path(args.cwd or Path.cwd()) / script
             skill_candidate = SKILL_ROOT / script
-            if not script.is_absolute() and not caller_candidate.is_file() and skill_candidate.is_file():
+            if (
+                not script.is_absolute()
+                and not caller_candidate.is_file()
+                and skill_candidate.is_file()
+            ):
                 command_args[0] = str(skill_candidate.resolve())
         command = [str(python), *command_args]
     completed = subprocess.run(
@@ -601,14 +691,21 @@ def dispatch_script_in_profile(
         only_profile=profile_name,
     )
     if not state["ready"]:
-        print(json.dumps({"doctor": state, "plan": install_plan(state)}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"doctor": state, "plan": install_plan(state)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 2
     selected_root = Path(state["runtime_root"])
     active_root = os.environ.get("SUBTITLE_RUNTIME_ROOT")
     if (
         os.environ.get("SUBTITLE_RUNTIME_PROFILE") == profile_name
         and active_root
-        and os.path.normcase(str(Path(active_root).resolve())) == os.path.normcase(str(selected_root.resolve()))
+        and os.path.normcase(str(Path(active_root).resolve()))
+        == os.path.normcase(str(selected_root.resolve()))
     ):
         return None
     manifest = load_json(selected_root / MANIFEST_NAME)
@@ -626,7 +723,9 @@ def dispatch_script_in_profile(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Discover, verify and use a shared subtitle runtime")
+    parser = argparse.ArgumentParser(
+        description="Discover, verify and use a shared subtitle runtime"
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -655,7 +754,11 @@ def main(argv: list[str] | None = None) -> int:
         root, candidates = choose_runtime_root(args.runtime_root, args.project_root)
         print(
             json.dumps(
-                {"runtime_root": str(root) if root else None, "candidates": candidates, "preferred_install_root": str(preferred_root())},
+                {
+                    "runtime_root": str(root) if root else None,
+                    "candidates": candidates,
+                    "preferred_install_root": str(preferred_root()),
+                },
                 ensure_ascii=False,
                 indent=2,
             )
