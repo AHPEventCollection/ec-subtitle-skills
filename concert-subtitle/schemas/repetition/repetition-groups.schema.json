@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repetition-groups.schema.json",
+  "title": "Concert song repetition groups",
+  "type": "object",
+  "required": [
+    "schema",
+    "tool_version",
+    "section_id",
+    "bindings",
+    "propagation_enabled",
+    "groups",
+    "representative",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "concert.repetition-groups.v1"},
+    "tool_version": {"const": "0.8.0"},
+    "section_id": {"type": "string"},
+    "bindings": {"$ref": "#/$defs/bindings"},
+    "propagation_enabled": {"type": "boolean"},
+    "groups": {"type": "array"},
+    "representative": {
+      "type": "object",
+      "required": [
+        "sample_event_ids",
+        "clip_start",
+        "clip_end",
+        "padding_seconds",
+        "single_visible_axis"
+      ]
+    },
+    "artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "bindings": {
+      "type": "object",
+      "required": [
+        "manifest_section_hash",
+        "package_input_hash",
+        "events_hash",
+        "audio_sha256",
+        "lyrics_sha256"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

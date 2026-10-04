@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repetition-proposal.schema.json",
+  "title": "Review-only repetition timing proposal",
+  "type": "object",
+  "required": [
+    "schema",
+    "section_id",
+    "applied",
+    "boundary_independent",
+    "changes",
+    "outliers",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "concert.repetition-proposal.v1"},
+    "applied": {"const": false},
+    "boundary_independent": {"const": true},
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "normalized_text",
+          "mode",
+          "start",
+          "end",
+          "eligible_boundaries",
+          "outlier"
+        ]
+      }
+    },
+    "outliers": {"type": "array"},
+    "artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

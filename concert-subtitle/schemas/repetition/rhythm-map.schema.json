@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rhythm-map.schema.json",
+  "title": "Same-song rhythm map",
+  "type": "object",
+  "required": [
+    "schema",
+    "tool_version",
+    "section_id",
+    "repetition_groups_hash",
+    "does_not_determine_lyrics",
+    "mappings",
+    "policy",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "concert.rhythm-map.v1"},
+    "tool_version": {"const": "0.8.0"},
+    "does_not_determine_lyrics": {"const": true},
+    "mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "occurrence_index",
+          "correlation",
+          "duration_drift_ratio",
+          "high_confidence",
+          "outlier_reasons"
+        ]
+      }
+    },
+    "artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

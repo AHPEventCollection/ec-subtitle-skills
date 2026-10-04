@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "section_id": "song_05",
+  "section_type": "song",
+  "section_start": 1150.13,
+  "section_end": 1320.0,
+  "context_start": 1135.13,
+  "context_end": 1335.0,
+  "timeline_origin": 1150.13,
+  "audio_context_origin": 1135.13,
+  "audio_path": "audio.flac",
+  "lyrics_file": "lyrics.txt",
+  "boundary_confidence": 0.9,
+  "input_hash": "0505050505050505050505050505050505050505050505050505050505050505"
+}

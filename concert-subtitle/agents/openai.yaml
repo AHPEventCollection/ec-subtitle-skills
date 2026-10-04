@@ -1,0 +1,4 @@
+interface:
+  display_name: "演唱会字幕"
+  short_description: "本场资料与素材分析、歌曲与MC双语字幕、轻量预览及整场交付"
+  default_prompt: "使用$concert-subtitle制作这场演唱会的日中双语字幕，先查询歌单、乐手、嘉宾和场地城市并分析原片字幕与报幕，逐段制作和审核，提供540p轻量预览，字幕正文不含制作备注，确认后压制终版"

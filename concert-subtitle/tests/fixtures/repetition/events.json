@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "section_id": "song_01",
+  "events": [
+    {"id": "e1", "start": 1.0, "end": 2.5, "source_text": "Aメロ一", "translation": "主歌一", "evidence": ["asr_word"]},
+    {"id": "e2", "start": 3.0, "end": 4.5, "source_text": "Bメロ一", "translation": "预副歌一", "evidence": ["asr_word"]},
+    {"id": "e3", "start": 5.0, "end": 6.5, "source_text": "光る空", "translation": "闪耀的天空", "evidence": ["asr_word"]},
+    {"id": "e4", "start": 7.0, "end": 8.5, "source_text": "走り出す", "translation": "开始奔跑", "evidence": ["asr_word"]},
+    {"id": "e5", "start": 12.0, "end": 13.5, "source_text": "Aメロ二", "translation": "主歌二", "evidence": ["asr_word"]},
+    {"id": "e6", "start": 14.0, "end": 15.5, "source_text": "Bメロ二", "translation": "预副歌二", "evidence": ["asr_word"]},
+    {"id": "e7", "start": 16.0, "end": 17.5, "source_text": "光る空", "translation": "闪耀的天空", "evidence": ["asr_word"]},
+    {"id": "e8", "start": 18.0, "end": 19.5, "source_text": "走り出す", "translation": "开始奔跑", "evidence": ["asr_word"]}
+  ]
+}

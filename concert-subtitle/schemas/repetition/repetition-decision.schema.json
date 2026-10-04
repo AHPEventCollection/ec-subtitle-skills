@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repetition-decision.schema.json",
+  "title": "Hash-bound repetition proposal decision",
+  "type": "object",
+  "required": [
+    "schema",
+    "section_id",
+    "decision",
+    "proposal_file_sha256",
+    "proposal_artifact_hash",
+    "representative_reviewed",
+    "all_outliers_reviewed",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "concert.repetition-decision.v1"},
+    "decision": {"enum": ["approve", "reject"]},
+    "proposal_file_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "proposal_artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "representative_reviewed": {"type": "boolean"},
+    "all_outliers_reviewed": {"type": "boolean"},
+    "artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

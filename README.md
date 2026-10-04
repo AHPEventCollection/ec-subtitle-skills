@@ -2,13 +2,14 @@
 
 面向日中双语字幕制作的Agent Skill合集，每个Skill都可以从仓库子目录单独安装
 
-当前先公开`music-video-subtitle`，`concert-subtitle`和`ec-music-subtitle-align`将在完成独立发布校验后加入
+当前公开`music-video-subtitle`和`concert-subtitle`，`ec-music-subtitle-align`的公开发布状态单独维护
 
 ## 当前可用
 
 |Skill|适用范围|单独安装|
 |---|---|---|
 |[`music-video-subtitle`](./music-video-subtitle/)|单曲MV、官方Music Video和短篇音乐影像的官方字幕优先、机器对齐、人工复对、预览、压制与交付|`https://github.com/AHPEventCollection/ec-subtitle-skills/tree/main/music-video-subtitle`|
+|[`concert-subtitle`](./concert-subtitle/)|整场演唱会的本场资料查询、素材分析、歌曲与MC双语字幕、轻量预览及正片交付|`https://github.com/AHPEventCollection/ec-subtitle-skills/tree/main/concert-subtitle`|
 
 ## 安装
 
@@ -24,7 +25,7 @@
 python install-skill-from-github.py --repo AHPEventCollection/ec-subtitle-skills --path music-video-subtitle
 ```
 
-安装只需要复制`music-video-subtitle/`，不依赖仓库根目录业务代码
+安装只需复制所选Skill目录，不依赖仓库根目录业务代码；演唱会可使用`https://github.com/AHPEventCollection/ec-subtitle-skills/tree/main/concert-subtitle`
 
 ## 目录结构
 

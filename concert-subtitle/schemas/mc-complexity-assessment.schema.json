@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mc-complexity-assessment.schema.json",
+  "title": "Concert subtitle MC complexity assessment",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "section_id",
+    "input_hash",
+    "classification",
+    "speaker_count_estimate",
+    "signals",
+    "evidence_basis",
+    "risk_level",
+    "manual_conform_required",
+    "automatic_reflow_policy",
+    "notes",
+    "assessed_by",
+    "assessed_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "tool_version": {"type": "string"},
+    "section_id": {"type": "string"},
+    "input_hash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "classification": {
+      "enum": [
+        "single_speaker",
+        "managed_dialogue",
+        "crowded_multi_speaker"
+      ]
+    },
+    "speaker_count_estimate": {"type": "integer", "minimum": 1},
+    "signals": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "overlapping_speech",
+          "rapid_turn_taking",
+          "speaker_identity_uncertain",
+          "off_camera_speech",
+          "crowd_interjections"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "evidence_basis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "continuous_av_review",
+          "audio_review",
+          "video_review",
+          "static_video_frames",
+          "asr_word_timing"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "risk_level": {"enum": ["low", "medium", "high"]},
+    "manual_conform_required": {"type": "boolean"},
+    "automatic_reflow_policy": {"enum": ["review_required", "draft_only"]},
+    "notes": {"type": "string"},
+    "assessed_by": {"type": "string"},
+    "assessed_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}
