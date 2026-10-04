@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "section_id": "song_04",
+  "events": [
+    {
+      "id": "song_04_0001",
+      "start": 0.0,
+      "end": 4.0,
+      "source_text": "正しい歌詞",
+      "translation": "正确歌词"
+    }
+  ]
+}

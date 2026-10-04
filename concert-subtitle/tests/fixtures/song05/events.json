@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "section_id": "song_05",
+  "events": [
+    {
+      "id": "song_05_0001",
+      "start": 0.0,
+      "end": 4.0,
+      "source_text": "本当の開始行",
+      "translation": "真正的起始句"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema": "ec-subtitle-runtime-requirements/v1",
+  "skill": "concert-subtitle",
+  "executables": ["ffmpeg", "ffprobe"],
+  "tools": [
+    {
+      "display_name": "FFmpeg与ffprobe",
+      "names": ["ffmpeg", "ffprobe"],
+      "estimated_bytes": 450000000,
+      "source": "https://ffmpeg.org/download.html",
+      "destination": "bin"
+    }
+  ],
+  "tasks": {
+    "default": {"profiles": []},
+    "prepare": {"profiles": []},
+    "song": {"profiles": ["whisper"]},
+    "mc": {"profiles": ["whisper"]}
+  },
+  "profiles": {
+    "whisper": {
+      "python_min": [3, 10],
+      "python_max_exclusive": [3, 15],
+      "imports": ["faster_whisper", "ctranslate2", "numpy", "pysubs2", "srt", "pykakasi"],
+      "artifacts": [
+        {"key": "whisper_model", "kind": "directory"}
+      ],
+      "install": {
+        "display_name": "Whisper歌曲与MC识别Profile",
+        "estimated_bytes": 3500000000,
+        "python_packages": "requirements-whisper.txt",
+        "assets": [
+          {
+            "name": "Systran/faster-whisper-large-v3",
+            "source": "https://huggingface.co/Systran/faster-whisper-large-v3",
+            "revision": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+            "estimated_bytes": 3090840219
+          }
+        ]
+      }
+    }
+  }
+}

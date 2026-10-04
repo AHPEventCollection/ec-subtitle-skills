@@ -1,0 +1,15 @@
+{
+  "first_vocal_start": 26.88,
+  "alignment_slope": 1.0,
+  "max_correction_seconds": 0.0,
+  "max_extrapolation_seconds": 0.0,
+  "first_reliable_anchor_ratio": 0.0,
+  "unsafe_reference_extrapolation": false,
+  "instrumental_gaps": [
+    {
+      "start": 0.0,
+      "end": 25.0,
+      "confidence": 0.98
+    }
+  ]
+}

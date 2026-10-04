@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-decisions.schema.json",
+  "title": "Concert subtitle review decision",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "section_id",
+    "input_hash",
+    "result_hash",
+    "decision",
+    "reviewed_points",
+    "reviewed_at",
+    "reviewer"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "tool_version": {"type": "string"},
+    "section_id": {"type": "string"},
+    "input_hash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "result_hash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "mc_complexity_hash": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "decision": {"enum": ["approved", "rejected"]},
+    "reviewed_points": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "notes": {"type": "string"},
+    "reviewed_at": {"type": "string"},
+    "reviewer": {"type": "string"}
+  },
+  "additionalProperties": false
+}

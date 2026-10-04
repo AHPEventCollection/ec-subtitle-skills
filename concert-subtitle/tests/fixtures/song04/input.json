@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "section_id": "song_04",
+  "section_type": "song",
+  "section_start": 891.54,
+  "section_end": 960.0,
+  "context_start": 876.54,
+  "context_end": 975.0,
+  "timeline_origin": 891.54,
+  "audio_context_origin": 876.54,
+  "audio_path": "audio.flac",
+  "lyrics_file": "lyrics.txt",
+  "boundary_confidence": 0.9,
+  "input_hash": "0404040404040404040404040404040404040404040404040404040404040404"
+}

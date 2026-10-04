@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repetition-import.schema.json",
+  "title": "Timing-only representative import",
+  "type": "object",
+  "required": [
+    "schema",
+    "section_id",
+    "reference_sha256",
+    "reference_read_only",
+    "accepted",
+    "timings",
+    "outliers",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "concert.repetition-import.v1"},
+    "reference_read_only": {"const": true},
+    "accepted": {"type": "boolean"},
+    "timings": {"type": "array"},
+    "outliers": {"type": "array"},
+    "artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}
