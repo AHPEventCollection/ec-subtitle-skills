@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import VERSION, console_version, load_manifest
+from common import VERSION, canonical_hash, console_version, file_sha256, load_manifest, read_json
 from validate_concert import validate_concert
 
 
@@ -41,6 +41,14 @@ def archive_concert(
         raise ValueError(f"演唱会全局验收未通过：{codes}")
     manifest = load_manifest(concert_dir)
     hard_sub = concert_dir / "output" / f"{manifest['concert_id']}.hardsub.mp4"
+    receipt_path = concert_dir / "run" / "evidence" / "render-receipt.json"
+    if receipt_path.is_file():
+        receipt = read_json(receipt_path)
+        if receipt.get("status") != "completed" or receipt.get("manifest_sha256") != canonical_hash(manifest):
+            raise ValueError("成片压制未完成或对应Manifest已过期")
+        hard_sub = Path(receipt["output"]).resolve()
+        if not hard_sub.is_file() or file_sha256(hard_sub) != receipt.get("output_sha256"):
+            raise ValueError("外置成片不存在或哈希与压制回执不一致")
     if not hard_sub.is_file():
         raise FileNotFoundError(f"缺少终版硬字幕视频：{hard_sub}")
     destination = destination.resolve()
@@ -61,6 +69,7 @@ def archive_concert(
             str(destination),
             "--report",
             str(report_path),
+            *(["--include", str(hard_sub)] if not hard_sub.is_relative_to(concert_dir) else []),
         ],
         check=True,
     )

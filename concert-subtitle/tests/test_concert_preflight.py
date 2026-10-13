@@ -118,7 +118,11 @@ class PreflightRoutingTests(unittest.TestCase):
                             "start": 1.0,
                             "end": 9.0,
                         }
-                    ]
+                    ],
+                    "presentation": {
+                        "source_song_titles": True,
+                        "timeline_extras": [{"type": "recap", "start": 0, "end": 1}],
+                    },
                 },
             )
             write_json(
@@ -143,6 +147,8 @@ class PreflightRoutingTests(unittest.TestCase):
             manifest["review_media"],
         )
         self.assertEqual("transcoded_preview", manifest["review_media_kind"])
+        self.assertTrue(manifest["presentation"]["source_song_titles"])
+        self.assertEqual("recap", manifest["presentation"]["timeline_extras"][0]["type"])
 
 
 @unittest.skipUnless(

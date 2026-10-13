@@ -42,13 +42,14 @@ class PreparationPreviewTests(unittest.TestCase):
             {"id": "song_01", "type": "song", "start": 0, "end": 5, "title": "First", "artist": "Band"},
             {"id": "song_02", "type": "song", "start": 7, "end": 12, "title": "Second", "artist": "Band", "source_song_title": False},
         ], "presentation": {"source_song_titles": True,
-                            "progress_bar": {"x": 0, "y": 0, "width": 1920, "height": 12}}}
+                            "progress_bar": {"x": 0, "y": 8, "width": 1920, "height": 18}}}
         text = render_song_progress_ass(manifest)
         dialogue = "\n".join(line for line in text.splitlines() if line.startswith("Dialogue:"))
-        self.assertNotIn("First", dialogue)
+        self.assertIn("1.  First", dialogue)
         self.assertIn("Second", dialogue)
         self.assertIn(r"\pos(0,0)", dialogue)
-        self.assertIn("1920 12", dialogue)
+        self.assertIn("1920 26", dialogue)
+        self.assertNotIn(",ProgressArtist,", dialogue)
         manifest["presentation"]["progress_bar"]["x"] = 1
         with self.assertRaises(ValueError):
             render_song_progress_ass(manifest)

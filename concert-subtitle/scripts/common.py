@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-VERSION = "0.15.3"
+VERSION = "0.18.0"
 SCHEMA_VERSION = "0.1.0"
 SOURCE_MAX_DISPLAY_UNITS = 56
 TRANSLATION_MAX_DISPLAY_UNITS = 44

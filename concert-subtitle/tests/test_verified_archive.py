@@ -13,6 +13,33 @@ from verified_archive import archive_directory, cleanup_verified_source, verify_
 
 
 class VerifiedArchiveTests(unittest.TestCase):
+    def test_external_render_is_included_and_external_source_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.make_source(root)
+            external = root / "external-render.mp4"
+            external.write_bytes(b"external final")
+            destination, report = root / "archive", root / "report.json"
+            archive_directory(source, destination, report, [external])
+            self.assertEqual(b"external final", (destination / "output" / external.name).read_bytes())
+            verify_report(report, source)
+            cleanup_verified_source(report, source)
+            self.assertFalse(source.exists())
+            self.assertTrue(external.is_file())
+
+    def test_external_render_change_blocks_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.make_source(root)
+            external = root / "external.mp4"
+            external.write_bytes(b"final")
+            destination, report = root / "archive", root / "report.json"
+            archive_directory(source, destination, report, [external])
+            external.write_bytes(b"changed")
+            with self.assertRaises(ValueError):
+                cleanup_verified_source(report, source)
+            self.assertTrue(source.is_dir())
+
     def make_source(self, root: Path) -> Path:
         source = root / "concert-workspace"
         (source / "output").mkdir(parents=True)

@@ -13,6 +13,13 @@
 
 ## 安装
 
+演唱会Skill当前版本为`0.18.0`，与MV字幕Skill独立安装、独立使用
+
+- 歌曲、MC、回顾、过场及MV共用整场进度条，仅当前段显示贴字标签
+- 终版优先实测并使用NVENC、QSV或AMF硬件编码，不可用时明确回退CPU
+- 默认成片目录通过项目本地`.subtitle-render.json`配置，必须与片源分属不同物理硬盘；单次可用`--output`显式指定
+- 外置成片通过压制回执纳入归档校验，本地路径配置和媒体不随Skill发布
+
 在Codex或其他支持Agent Skills的工具中提供Skill目录链接
 
 ```text
@@ -23,6 +30,7 @@
 
 ```powershell
 python install-skill-from-github.py --repo AHPEventCollection/ec-subtitle-skills --path music-video-subtitle
+python install-skill-from-github.py --repo AHPEventCollection/ec-subtitle-skills --path concert-subtitle
 ```
 
 安装只需复制所选Skill目录，不依赖仓库根目录业务代码；演唱会可使用`https://github.com/AHPEventCollection/ec-subtitle-skills/tree/main/concert-subtitle`
@@ -62,6 +70,9 @@ python music-video-subtitle\scripts\runtime_manager.py doctor --project-root "<m
 python -B -m ruff check --no-cache music-video-subtitle\scripts music-video-subtitle\tests
 python -B -m unittest discover -s music-video-subtitle\tests -v
 python -B quick_validate.py music-video-subtitle
+python -B -m ruff check --no-cache concert-subtitle\scripts concert-subtitle\tests
+python -B -m unittest discover -s concert-subtitle\tests -v
+python -B quick_validate.py concert-subtitle
 ```
 
 ## 许可证

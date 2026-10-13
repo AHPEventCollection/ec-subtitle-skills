@@ -300,6 +300,11 @@ def create_manifest(
         "coverage_policy": "full_timeline_asr",
         "sections": sections,
     }
+    if isinstance(raw, dict) and "presentation" in raw:
+        manifest["presentation"] = raw["presentation"]
+    from song_progress import render_song_progress_ass
+
+    render_song_progress_ass(manifest)  # Validate presentation before persisting
     write_json(output_path, manifest)
     return manifest
 

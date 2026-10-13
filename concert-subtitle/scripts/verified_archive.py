@@ -73,7 +73,8 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def archive_directory(source: Path, destination: Path, report: Path) -> Path:
+def archive_directory(source: Path, destination: Path, report: Path,
+                      include_files: list[Path] | None = None) -> Path:
     source = source.resolve()
     destination = destination.resolve()
     report = report.resolve()
@@ -85,11 +86,28 @@ def archive_directory(source: Path, destination: Path, report: Path) -> Path:
     expected = inventory(source)
     if not expected:
         raise ValueError("拒绝归档空目录")
+    external_files = []
+    existing = {entry["path"].casefold() for entry in expected}
+    for file in include_files or []:
+        file = file.resolve()
+        if not file.is_file() or _contains(source, file) or _contains(destination, file):
+            raise ValueError(f"外置成片路径非法或与归档树重叠：{file}")
+        relative = "output/" + file.name
+        if relative.casefold() in existing:
+            raise ValueError(f"外置成片与归档内文件重名：{relative}")
+        existing.add(relative.casefold())
+        expected.append({"path": relative, "size": file.stat().st_size, "sha256": file_sha256(file)})
+        external_files.append({"source": str(file), "path": relative})
+    expected.sort(key=lambda entry: entry["path"])
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.parent / f".{destination.name}.partial-{uuid.uuid4().hex}"
     destination_created = False
     try:
         shutil.copytree(source, partial, copy_function=shutil.copy2)
+        for external in external_files:
+            target_file = partial / external["path"]
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(external["source"], target_file)
         if inventory(partial) != expected:
             raise OSError("临时归档副本与源目录的清单或SHA256不一致")
         partial.replace(destination)
@@ -104,6 +122,7 @@ def archive_directory(source: Path, destination: Path, report: Path) -> Path:
             "file_count": len(expected),
             "manifest_sha256": manifest_sha256(expected),
             "entries": expected,
+            "external_files": external_files,
         }
         _write_json_atomic(report, payload)
         return report
@@ -140,8 +159,16 @@ def verify_report(report: Path, target: Path | None = None) -> dict[str, Any]:
         raise NotADirectoryError(f"正式归档目录不存在：{destination}")
     if inventory(destination) != expected:
         raise ValueError("正式归档目录已变化，拒绝清理本地工作区")
-    if source.exists() and inventory(source) != expected:
-        raise ValueError("本地源目录在归档后已变化，拒绝清理")
+    if source.exists():
+        current = inventory(source)
+        for external in payload.get("external_files", []):
+            file = Path(external["source"])
+            if not file.is_file():
+                raise ValueError("外置成片在归档后已丢失，拒绝清理")
+            current.append({"path": external["path"], "size": file.stat().st_size, "sha256": file_sha256(file)})
+        current.sort(key=lambda entry: entry["path"])
+        if current != expected:
+            raise ValueError("本地源目录或外置成片在归档后已变化，拒绝清理")
     return payload
 
 
@@ -166,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     archive.add_argument("--source", required=True, type=Path)
     archive.add_argument("--destination", required=True, type=Path)
     archive.add_argument("--report", required=True, type=Path)
+    archive.add_argument("--include", action="append", type=Path, default=[])
     cleanup = subparsers.add_parser("cleanup")
     cleanup.add_argument("--report", required=True, type=Path)
     cleanup.add_argument("--target", required=True, type=Path)
@@ -178,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "archive":
-            result: Any = archive_directory(args.source, args.destination, args.report)
+            result: Any = archive_directory(args.source, args.destination, args.report, args.include)
         elif args.command == "cleanup":
             result = cleanup_verified_source(args.report, args.target)
         else:

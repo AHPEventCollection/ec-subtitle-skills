@@ -18,6 +18,9 @@ sys.path.insert(0, str(SCRIPTS))
 from song_progress import (
     BAR_GAP,
     BAR_WIDTH,
+    active_segment_bounds,
+    current_label,
+    label_width,
     _subtitle_filter,
     merge_review_ass,
     render_final_video,
@@ -25,6 +28,7 @@ from song_progress import (
     review_windows,
     segment_bounds,
     song_progress_ass_failures,
+    timeline_sections,
     write_review_ass,
 )
 
@@ -121,17 +125,24 @@ class SongProgressTests(unittest.TestCase):
             source = root / "original.mp4"
             caption = root / "caption.ass"
             progress = root / "progress.ass"
+            source.write_bytes(b"source")
+            caption.write_text("caption", encoding="utf-8")
+            progress.write_text("progress", encoding="utf-8")
+            destination = root / "rendered.mp4"
             with (
                 patch(
                     "song_progress._video_inputs",
                     return_value=(sample_manifest(1), source, caption, progress),
                 ) as video_inputs,
                 patch("song_progress.resolve_binary", return_value=Path("ffmpeg")),
-                patch("song_progress.subprocess.run") as run,
+                patch("render_policy.default_destination", return_value=destination),
+                patch("render_policy.select_encoder", return_value=("libx264", [])),
+                patch("render_policy.verify_encoded_media", return_value={"format": {"duration": "14"}}),
+                patch("song_progress.subprocess.run", side_effect=lambda *a, **k: destination.write_bytes(b"encoded")) as run,
             ):
                 render_final_video(root)
 
-            video_inputs.assert_called_once_with(root.resolve())
+            self.assertEqual(3, video_inputs.call_count)
             self.assertIn(str(source), run.call_args.args[0])
 
     def test_segments_fill_fixed_width_without_numeric_label(self) -> None:
@@ -150,22 +161,96 @@ class SongProgressTests(unittest.TestCase):
         self.assertNotIn("%", rendered)
         self.assertIn(r"\t(0,12000,1,\fscx100)", rendered)
 
-    def test_titles_and_bar_exist_only_inside_song_windows(self) -> None:
+    def test_labels_and_bar_cover_mc_and_transition_windows(self) -> None:
         rendered = render_song_progress_ass(sample_manifest(2))
         dialogue = [
             line for line in rendered.splitlines() if line.startswith("Dialogue:")
         ]
 
         self.assertIn("Song 1", rendered)
-        self.assertIn("Sample Artist", rendered)
-        self.assertTrue(
-            all(line.split(",", 3)[1] != "0:00:14.00" for line in dialogue)
-        )
+        self.assertNotIn("Sample Artist", rendered)
+        self.assertTrue(any(line.split(",", 3)[1] == "0:00:14.00" for line in dialogue))
+        for label in ("过场", "1.  Song 1", "MC1", "2.  Song 2"):
+            self.assertEqual(1, sum(line.endswith("}" + label) for line in dialogue))
+        self.assertEqual(4, sum(",ProgressLabel," in line for line in dialogue))
+        self.assertNotIn("}曲", rendered)
         self.assertEqual(
-            [(2.0, 6.0), (7.25, 8.75), (12.0, 14.0),
-             (17.0, 21.0), (22.25, 23.75), (27.0, 29.0)],
+            [(0.0, 6.0), (7.25, 8.75), (12.0, 21.0), (22.25, 23.75), (27.0, 29.0)],
             review_windows(sample_manifest(2)),
         )
+
+    def test_explicit_recap_mv_and_independent_counters(self) -> None:
+        manifest = sample_manifest(2)
+        manifest["duration_seconds"] = 35
+        manifest["presentation"] = {"timeline_extras": [
+            {"type": "recap", "start": 0, "end": 2},
+            {"type": "mv", "start": 30, "end": 35},
+        ]}
+        self.assertEqual(["回顾", "曲1", "MC1", "曲2", "过场", "MV"],
+                         [item["label"] for item in timeline_sections(manifest)])
+        self.assertEqual(3, len(manifest["sections"]))
+        manifest["presentation"]["timeline_extras"][0]["end"] = 3
+        with self.assertRaisesRegex(ValueError, "重叠"):
+            render_song_progress_ass(manifest)
+
+    def test_invalid_extra_intervals_and_types_are_rejected(self) -> None:
+        for extra in ({"type": "song", "start": 0, "end": 1},
+                      {"type": "recap", "start": 0, "end": float("nan")},
+                      {"type": "mv", "start": 50, "end": 60}):
+            manifest = sample_manifest(1)
+            manifest["presentation"] = {"timeline_extras": [extra]}
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                render_song_progress_ass(manifest)
+
+    def test_mc_only_timeline_is_supported(self) -> None:
+        manifest = {"sections": [{"type": "mc", "start": 0, "end": 5}]}
+        self.assertIn("}MC1", render_song_progress_ass(manifest))
+
+    def test_current_cell_hugs_text_and_other_cells_fill_remaining_width(self) -> None:
+        short = label_width("2.  口唇")
+        long = label_width("1.  the other end of the globe")
+        self.assertLess(short, long)
+        for requested in (short, long, 9999):
+            bounds = active_segment_bounds(30, 4, requested)
+            self.assertEqual(0, bounds[0][0])
+            self.assertEqual(1920, bounds[-1][1])
+            if requested != 9999:
+                self.assertEqual(requested, bounds[4][1] - bounds[4][0])
+            self.assertTrue(all(b - a >= 4 for a, b in bounds))
+        self.assertEqual("1.  Song", current_label({"type": "song", "label": "曲1", "title": "Song"}))
+        self.assertEqual("MC1", current_label({"type": "mc", "label": "MC1", "title": "私有备注"}))
+        self.assertEqual("MV  Song", current_label({"type": "mv", "label": "MV", "title": "Song（片尾MV）"}))
+
+    def test_program_range_and_stable_id_overrides_preserve_business_types(self) -> None:
+        manifest = {"duration_seconds": 100, "sections": [
+            {"id": "promo", "type": "mc", "start": 0, "end": 5},
+            {"id": "intro_00", "type": "mc", "start": 5, "end": 10},
+            {"id": "song_01", "type": "song", "title": "One", "start": 10, "end": 30},
+            {"id": "mc_01", "type": "mc", "start": 30, "end": 40},
+            {"id": "bonus_17", "type": "song", "title": "Bonus", "start": 45, "end": 80},
+        ], "presentation": {
+            "timeline_range": {"start": 5, "end": 80},
+            "section_kinds": {"intro_00": "recap", "bonus_17": "mv"},
+        }}
+        timeline = timeline_sections(manifest)
+        self.assertEqual(["回顾", "曲1", "MC1", "过场", "MV"], [row["label"] for row in timeline])
+        self.assertEqual((5, 80), (timeline[0]["start"], timeline[-1]["end"]))
+        self.assertEqual("mc", manifest["sections"][1]["type"])
+        self.assertEqual("song", manifest["sections"][-1]["type"])
+        self.assertEqual((40, 45), (timeline[3]["start"], timeline[3]["end"]))
+        rendered = render_song_progress_ass(manifest)
+        self.assertNotIn("}曲2", rendered)
+        self.assertNotIn("}MC2", rendered)
+        self.assertNotIn("}Bonus", rendered)
+        self.assertEqual(5, review_windows(manifest)[0][0])
+        self.assertEqual(80, review_windows(manifest)[-1][1])
+        manifest["presentation"]["section_kinds"]["missing"] = "recap"
+        with self.assertRaisesRegex(ValueError, "section ID"):
+            timeline_sections(manifest)
+        del manifest["presentation"]["section_kinds"]["missing"]
+        manifest["presentation"]["timeline_range"]["start"] = 6
+        with self.assertRaisesRegex(ValueError, "截断"):
+            timeline_sections(manifest)
 
     def test_graphics_windows_ignore_legacy_structure_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -236,7 +321,7 @@ class SongProgressTests(unittest.TestCase):
                     "-vf",
                     (
                         _subtitle_filter(caption_path, ass_path)
-                        + ",crop=760:6:80:62"
+                        + ",crop=1920:4:0:30"
                     ),
                     "-ss",
                     str(timestamp),

@@ -216,7 +216,7 @@ def build_source_preview(
         raise ValueError("尚无可导出的字幕事件")
     events.sort(key=lambda event: (event["start"], event["end"]))
     caption_text = render_ass(events, "整场候选-未批准")
-    if lightweight_video and any(section.get("type") == "song" for section in manifest["sections"]):
+    if lightweight_video:
         from song_progress import merge_review_ass, render_song_progress_ass
         caption_text = merge_review_ass(caption_text, render_song_progress_ass(manifest))
     root.mkdir(parents=True, exist_ok=True)

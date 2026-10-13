@@ -26,6 +26,7 @@ venv/
 runtime.local.*
 AGENTS.md
 .subtitle-runtime.json
+.subtitle-render.json
 runtime.json
 
 # Project workspaces and generated evidence

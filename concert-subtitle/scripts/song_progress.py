@@ -21,13 +21,74 @@ from common import (
 
 PLAY_RES_X = 1920
 PLAY_RES_Y = 1080
-BAR_X = 80
-BAR_Y = 62
-BAR_WIDTH = 760
-BAR_HEIGHT = 6
+BAR_X = 0
+BAR_Y = 8
+BAR_WIDTH = 1920
+BAR_HEIGHT = 18
 BAR_GAP = 4
-TITLE_SECONDS = 7.0
 PROGRESS_SUFFIX = "song-progress.ass"
+
+
+def timeline_sections(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build presentation-only timeline; never change subtitle sections or approvals."""
+    sections = [dict(section) for section in manifest.get("sections", [])]
+    presentation = manifest.get("presentation", {})
+    if not isinstance(presentation, dict):
+        raise ValueError("presentation必须为对象")
+    overrides = presentation.get("section_kinds", {})
+    if not isinstance(overrides, dict) or set(overrides) - {section.get("id") for section in sections}:
+        raise ValueError("section_kinds必须按已有稳定section ID配置")
+    extras = presentation.get("timeline_extras", [])
+    if not isinstance(extras, list):
+        raise ValueError("timeline_extras必须为数组")
+    for extra in extras:
+        if not isinstance(extra, dict) or extra.get("type") not in {"recap", "transition", "mv"}:
+            raise ValueError("额外展示段type只允许recap、transition或mv")
+        sections.append(dict(extra))
+    if not sections:
+        raise ValueError("Manifest中没有时间线分段")
+    sections.sort(key=lambda section: float(section["start"]))
+    duration = float(manifest.get("duration_seconds", sections[-1]["end"]))
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("时间线总时长非法")
+    scope = presentation.get("timeline_range", {"start": 0, "end": duration})
+    if not isinstance(scope, dict) or set(scope) != {"start", "end"}:
+        raise ValueError("timeline_range必须包含start和end")
+    scope_start, scope_end = float(scope["start"]), float(scope["end"])
+    if not math.isfinite(scope_start) or not math.isfinite(scope_end) or not 0 <= scope_start < scope_end <= duration:
+        raise ValueError("timeline_range必须位于全片时长内")
+    timeline: list[dict[str, Any]] = []
+    cursor = scope_start
+    counters = {"song": 0, "mc": 0}
+    for section in sections:
+        start, end = float(section["start"]), float(section["end"])
+        kind = overrides.get(section.get("id"), section.get("type"))
+        if kind not in {"song", "mc", "recap", "transition", "mv"}:
+            raise ValueError("不支持的时间线分段类型")
+        if not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= duration:
+            raise ValueError("时间线分段区间非法或越界")
+        if end <= scope_start or start >= scope_end:
+            continue
+        if start < scope_start or end > scope_end:
+            raise ValueError("节目展示范围边界不能截断已有分段")
+        if start < cursor:
+            raise ValueError("时间线分段存在时间重叠")
+        if start > cursor:
+            timeline.append({"type": "transition", "start": cursor, "end": start, "label": "过场"})
+        if kind in counters:
+            counters[kind] += 1
+            label = f"曲{counters[kind]}" if kind == "song" else f"MC{counters[kind]}"
+        else:
+            label = {"recap": "回顾", "transition": "过场", "mv": "MV"}[kind]
+        if kind == "song" and not str(section.get("title", "")).strip():
+            raise ValueError("歌曲分段缺少歌名")
+        timeline.append({**section, "type": kind, "label": label})
+        cursor = end
+    if cursor < scope_end:
+        timeline.append({"type": "transition", "start": cursor, "end": scope_end, "label": "过场"})
+    if len(timeline) > 80:
+        raise ValueError("时间线超过80段，无法保持标签可辨识")
+    return timeline
 
 
 def song_sections(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,24 +159,68 @@ def _dialogue(
     )
 
 
+def current_label(section: dict[str, Any]) -> str:
+    label = section["label"]
+    if section["type"] == "song":
+        label = label.removeprefix("曲") + "."
+    if section["type"] in {"song", "mv"}:
+        label += "  " + str(section.get("title", "")).replace("（片尾MV）", "").strip()
+    return label.rstrip()
+
+
+def label_width(label: str) -> int:
+    """Match the approved Yu Gothic/libass preview without a personal font path."""
+    import os
+
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "YuGothB.ttc"), 24)
+        return math.ceil(font.getlength(label) * 0.8) + 16
+    except (ImportError, OSError):
+        # Portable fallback when the reference font is unavailable
+        import unicodedata
+        units = sum(1 if unicodedata.east_asian_width(ch) in {"W", "F"} else 0.55 for ch in label)
+        return math.ceil(units * 24 * 0.8) + 16
+
+
+def active_segment_bounds(total: int, active: int, requested: int, *,
+                          x: int = BAR_X, width: int = BAR_WIDTH) -> list[tuple[int, int]]:
+    if total < 1 or not 0 <= active < total:
+        raise ValueError("进度段索引非法")
+    gap = BAR_GAP if total <= 30 else 2
+    available = width - gap * (total - 1)
+    if available < 20 + (total - 1) * 4:
+        raise ValueError("进度条宽度不足以容纳标签和分段")
+    current = min(requested, available - (total - 1) * 4)
+    if total == 1:
+        return [(x, x + current)]
+    small, remainder = divmod(available - current, total - 1)
+    bounds, cursor, used = [], x, 0
+    for index in range(total):
+        cell_width = current if index == active else small + (used < remainder)
+        bounds.append((cursor, cursor + cell_width))
+        cursor += cell_width + gap
+        if index != active:
+            used += 1
+    return bounds
+
+
 def render_song_progress_ass(manifest: dict[str, Any]) -> str:
-    songs = song_sections(manifest)
+    sections = timeline_sections(manifest)
     presentation = manifest.get("presentation", {})
     bar = {"x": BAR_X, "y": BAR_Y, "width": BAR_WIDTH, "height": BAR_HEIGHT}
     bar.update(presentation.get("progress_bar", {}))
     if any(type(bar[key]) is not int for key in ("x", "y", "width", "height")) or not (
-        0 <= bar["x"] < PLAY_RES_X and 0 <= bar["y"] < PLAY_RES_Y
+        0 <= bar["x"] < PLAY_RES_X and 8 <= bar["y"] < PLAY_RES_Y
         and 0 < bar["width"] <= PLAY_RES_X - bar["x"]
-        and 0 < bar["height"] <= PLAY_RES_Y - bar["y"]
+        and 0 < bar["height"] <= PLAY_RES_Y - bar["y"] - 8
     ):
-        raise ValueError("progress_bar必须使用1920×1080画面内的整数坐标和正尺寸")
-    bounds = segment_bounds(len(songs), x=bar["x"], width=bar["width"])
-    bar_y, bar_height = bar["y"], bar["height"]
-    manifest_hash = canonical_hash(manifest)
+        raise ValueError("progress_bar必须为画面内整数坐标和正尺寸，上下各保留8像素")
+    top, bottom = bar["y"] - 8, bar["y"] + bar["height"] + 8
     header = f"""[Script Info]
 ; Generated by concert-subtitle v{VERSION}
-; Manifest-SHA256: {manifest_hash}
-Title: {manifest.get('concert_id', 'concert')} song progress
+; Manifest-SHA256: {canonical_hash(manifest)}
+Title: {manifest.get('concert_id', 'concert')} timeline progress
 ScriptType: v4.00+
 PlayResX: {PLAY_RES_X}
 PlayResY: {PLAY_RES_Y}
@@ -124,101 +229,41 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ProgressTitle,Yu Gothic UI,46,&H00FFFFFF,&H00FFFFFF,&H00101010,&H78000000,-1,0,0,0,100,100,0,0,1,2,1,7,80,80,92,1
-Style: ProgressArtist,Yu Gothic UI,28,&H30FFFFFF,&H30FFFFFF,&H00101010,&H78000000,0,0,0,0,100,100,0,0,1,1.5,1,7,80,80,148,1
 Style: ProgressDrawing,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: ProgressLabel,Yu Gothic,24,&H0018191C,&H0018191C,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dialogue: list[str] = []
-    base_shape = " ".join(
-        _rectangle(x0, bar_y, x1, bar_y + bar_height)
-        for x0, x1 in bounds
-    )
-    for song_index, song in enumerate(songs):
-        start = float(song["start"])
-        end = float(song["end"])
-        duration_ms = max(1, int(round((end - start) * 1000)))
-        dialogue.append(
-            _dialogue(
-                10,
-                start,
-                end,
-                "ProgressDrawing",
-                (
-                    r"{\an7\pos(0,0)\p1\bord0\shad0"
-                    r"\1c&H00FFFFFF&\alpha&HAA&}"
-                    + base_shape
-                ),
-            )
-        )
-        if song_index:
-            completed_shape = " ".join(
-                _rectangle(x0, bar_y, x1, bar_y + bar_height)
-                for x0, x1 in bounds[:song_index]
-            )
-            dialogue.append(
-                _dialogue(
-                    11,
-                    start,
-                    end,
-                    "ProgressDrawing",
-                    (
-                        r"{\an7\pos(0,0)\p1\bord0\shad0"
-                        r"\1c&H005DC9F4&\alpha&H45&}"
-                        + completed_shape
-                    ),
-                )
-            )
-        current_start, current_end = bounds[song_index]
-        current_width = current_end - current_start
-        dialogue.append(
-            _dialogue(
-                12,
-                start,
-                end,
-                "ProgressDrawing",
-                (
-                    "{\\an7"
-                    f"\\pos({current_start},{bar_y})"
-                    r"\p1\bord0\shad0\1c&H005DC9F4&\alpha&H00&"
-                    "\\fscx0\\fscy100"
-                    f"\\t(0,{duration_ms},1,\\fscx100)"
-                    "}"
-                    f"m 0 0 l {current_width} 0 {current_width} "
-                    f"{bar_height} 0 {bar_height}"
-                ),
-            )
-        )
-        if song.get("source_song_title", presentation.get("source_song_titles", False)):
-            continue
-        title_end = min(end, start + TITLE_SECONDS)
-        fade_out = min(500, max(100, int((title_end - start) * 250)))
-        title = _ass_escape(str(song.get("title", "")).strip())
-        dialogue.append(
-            _dialogue(
-                20,
-                start,
-                title_end,
-                "ProgressTitle",
-                f"{{\\fad(250,{fade_out})}}{title}",
-            )
-        )
-        artist = _ass_escape(str(song.get("artist", "")).strip())
-        if artist:
-            dialogue.append(
-                _dialogue(
-                    20,
-                    start,
-                    title_end,
-                    "ProgressArtist",
-                    f"{{\\fad(250,{fade_out})}}{artist}",
-                )
-            )
+    for current, section in enumerate(sections):
+        start, end = float(section["start"]), float(section["end"])
+        label = current_label(section)
+        requested = label_width(label)
+        bounds = active_segment_bounds(len(sections), current, requested, x=bar["x"], width=bar["width"])
+        for index, (x0, x1) in enumerate(bounds):
+            active = index == current
+            color = "5DC9F4" if index <= current else "FFFFFF"
+            alpha = "18" if active else ("35" if index < current else "A0")
+            shape = _rectangle(x0, top if active else bar["y"], x1,
+                               bottom if active else bar["y"] + bar["height"])
+            dialogue.append(_dialogue(
+                10, start, end, "ProgressDrawing",
+                r"{\an7\pos(0,0)\p1\bord0\shad0" + f"\\1c&H{color}&\\alpha&H{alpha}&" + "}" + shape,
+            ))
+        x0, x1 = bounds[current]
+        duration_ms = max(1, round((end - start) * 1000))
+        dialogue.append(_dialogue(
+            11, start, end, "ProgressDrawing",
+            f"{{\\an7\\pos({x0},{bottom - 3})\\p1\\bord0\\shad0\\1c&HFFFFFF&"
+            f"\\fscx0\\t(0,{duration_ms},1,\\fscx100)}}" + _rectangle(0, 0, x1 - x0, 3),
+        ))
+        scale = min(100, (x1 - x0 - 16) / max(1, requested - 16) * 100)
+        dialogue.append(_dialogue(
+            12, start, end, "ProgressLabel",
+            f"{{\\an4\\pos({x0 + 8},{(top + bottom) / 2 - 1:g})\\fscx{scale:g}}}" + _ass_escape(label),
+        ))
     return header + "\n".join(dialogue) + "\n"
-
-
 def progress_ass_path(concert_dir: Path, manifest: dict[str, Any]) -> Path:
     concert_id = validate_filename_component(
         str(manifest["concert_id"]),
@@ -317,54 +362,76 @@ def render_final_video(
     ffmpeg_value: str | None = None,
     crf: int = 18,
     preset: str = "medium",
+    encoder: str = "auto",
 ) -> Path:
+    from common import file_fingerprint, file_sha256, write_json
+    from gpu_queue import run_queued
+    from render_policy import (
+        default_destination, encoder_arguments, queue_directory,
+        select_encoder, verify_encoded_media,
+    )
+
     concert_dir = concert_dir.resolve()
     manifest, source, caption_ass, progress_ass = _video_inputs(concert_dir)
     ffmpeg = resolve_binary("ffmpeg", ffmpeg_value)
-    destination = (
-        output_path.resolve()
-        if output_path
-        else concert_dir / "output" / f"{manifest['concert_id']}.hardsub.mp4"
-    )
+    destination = default_destination(concert_dir, source, manifest["concert_id"], output_path)
+    # Bind the render to the exact validated inputs; queue waiting cannot approve stale data
+    inputs = {
+        "manifest_sha256": canonical_hash(manifest),
+        "source": file_fingerprint(source),
+        "caption_sha256": file_sha256(caption_ass),
+        "progress_sha256": file_sha256(progress_ass),
+    }
+
+    def ensure_current() -> None:
+        current, _, _, _ = _video_inputs(concert_dir)
+        if (canonical_hash(current) != inputs["manifest_sha256"]
+                or file_fingerprint(source) != inputs["source"]
+                or file_sha256(caption_ass) != inputs["caption_sha256"]
+                or file_sha256(progress_ass) != inputs["progress_sha256"]):
+            raise ValueError("压制输入已变化，停止使用过期批准结果")
+
+    chosen, probes = select_encoder(ffmpeg, concert_dir, encoder, crf, preset)
+    print(f"视频编码器：{chosen}；输出：{destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     command = [
-        str(ffmpeg),
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(source),
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a:0?",
-        "-vf",
-        _subtitle_filter(caption_ass, progress_ass),
-        "-c:v",
-        "libx264",
-        "-preset",
-        preset,
-        "-crf",
-        str(crf),
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-movflags",
-        "+faststart",
-        str(destination),
+        str(ffmpeg), "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
+        "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+        "-vf", _subtitle_filter(caption_ass, progress_ass),
+        *encoder_arguments(chosen, crf, preset),
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(destination),
     ]
-    subprocess.run(command, check=True)
+    receipt_path = concert_dir / "run" / "evidence" / "render-receipt.json"
+    receipt = {
+        **inputs, "output": str(destination), "encoder": chosen, "probes": probes,
+        "quality_value": crf, "command": command, "status": "running",
+    }
+    write_json(receipt_path, receipt)
+    try:
+        if chosen == "libx264":
+            ensure_current()
+            subprocess.run(command, check=True)
+        else:
+            code = run_queued(
+                concert_dir / "run" / "runtime", "final-video-render", command,
+                on_acquired=ensure_current, queue_dir_override=queue_directory(concert_dir),
+            )
+            if code:
+                raise subprocess.CalledProcessError(code, command)
+        media = verify_encoded_media(ffmpeg, destination)
+        ensure_current()
+        receipt.update(status="completed", output_sha256=file_sha256(destination),
+                       output_size=destination.stat().st_size,
+                       duration_seconds=float(media["format"]["duration"]))
+        write_json(receipt_path, receipt)
+    except Exception as error:
+        receipt.update(status="failed", error=str(error))
+        write_json(receipt_path, receipt)
+        raise
     return destination
-
-
 def review_windows(manifest: dict[str, Any], concert_dir: Path | None = None) -> list[tuple[float, float]]:
     windows: list[tuple[float, float]] = []
-    for song in song_sections(manifest):
+    for song in timeline_sections(manifest):
         start = float(song["start"])
         end = float(song["end"])
         duration = end - start
@@ -466,6 +533,7 @@ def build_parser() -> argparse.ArgumentParser:
             action_parser.add_argument("--ffmpeg")
             action_parser.add_argument("--crf", type=int, default=18)
             action_parser.add_argument("--preset", default="medium")
+            action_parser.add_argument("--encoder", choices=("auto", "cpu", "h264_nvenc", "h264_qsv", "h264_amf"), default="auto")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     return parser
 
@@ -489,6 +557,7 @@ def main(argv: list[str] | None = None) -> int:
             args.ffmpeg,
             args.crf,
             args.preset,
+            args.encoder,
         )
         print(f"video={output}")
         return 0
