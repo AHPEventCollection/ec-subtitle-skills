@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: E402
 
 import hashlib
+import copy
+import json
 import shutil
 import subprocess
 import sys
@@ -18,8 +20,11 @@ sys.path.insert(0, str(SCRIPTS))
 from song_progress import (
     BAR_GAP,
     BAR_WIDTH,
+    DEFAULT_PROGRESS_BAR,
+    progress_bar_config,
     active_segment_bounds,
     current_label,
+    duration_segment_bounds,
     label_width,
     _subtitle_filter,
     merge_review_ass,
@@ -67,6 +72,132 @@ def sample_manifest(song_count: int = 3) -> dict:
 
 
 class SongProgressTests(unittest.TestCase):
+    def test_defaults_match_explicit_public_configuration_without_mutation(self) -> None:
+        manifest = sample_manifest(3)
+        original = copy.deepcopy(manifest)
+        default = render_song_progress_ass(manifest)
+        explicit = copy.deepcopy(manifest)
+        explicit["presentation"] = {"progress_bar": dict(DEFAULT_PROGRESS_BAR)}
+        # The manifest binding comment legitimately differs; the graphics do not.
+        self.assertEqual(default.split("[V4+ Styles]", 1)[1],
+                         render_song_progress_ass(explicit).split("[V4+ Styles]", 1)[1])
+        self.assertEqual(original, manifest)
+        self.assertIn(r"\alpha&H66&", default)
+        self.assertNotIn("}MC1", default)
+        self.assertIn("}MC", default)
+        self.assertIn(r"\clip", default)
+        self.assertNotIn(r"\fscx0\t", default)
+
+    def test_schema_declares_all_renderer_settings_and_defaults(self) -> None:
+        schema = json.loads((SKILL_ROOT / "schemas/concert-manifest.schema.json").read_text("utf-8"))
+        properties = schema["properties"]["presentation"]["properties"]["progress_bar"]["properties"]
+        self.assertEqual(set(DEFAULT_PROGRESS_BAR), set(properties))
+        for key in ("layout", "mc_weight", "mc_max_song_ratio", "mc_label_always", "unplayed_alpha"):
+            self.assertEqual(DEFAULT_PROGRESS_BAR[key], properties[key]["default"])
+        for invalid in ({"mc_weight": True}, {"mc_weight": "3"}, {"mc_max_song_ratio": -1},
+                        {"unplayed_alpha": 256}, {"unplayed_alpha": True},
+                        {"mc_label_always": 1}, {"layout": "missing"}, {"extra": 1}, []):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                progress_bar_config(invalid)
+
+    def test_explicit_legacy_layout_remains_available(self) -> None:
+        manifest = sample_manifest(2)
+        manifest["presentation"] = {"progress_bar": {"layout": "label_fit"}}
+        rendered = render_song_progress_ass(manifest)
+        self.assertIn("}MC1", rendered)
+        self.assertIn(r"\fscx0\t", rendered)
+        self.assertNotIn(r"\clip", rendered)
+
+    def test_long_mc_is_capped_against_typical_song_and_keeps_real_time(self) -> None:
+        sections = [
+            {"type": "song", "start": 0, "end": 200},
+            {"type": "mc", "start": 200, "end": 2000},
+            {"type": "song", "start": 2000, "end": 2200},
+        ]
+        for active in (None, 0, 1, 2):
+            bounds = duration_segment_bounds(sections, width=1000, active=active,
+                                             requested=100, mc_max_song_ratio=1.2)
+            widths = [b - a for a, b in bounds]
+            self.assertLessEqual(widths[1], widths[0] * 1.2 + 1)
+            self.assertEqual((0, 1000), (bounds[0][0], bounds[-1][1]))
+        self.assertEqual(2000, sections[1]["end"])
+        for value in (0, -1, float("nan"), True):
+            with self.assertRaisesRegex(ValueError, "mc_max_song_ratio"):
+                duration_segment_bounds(sections, mc_max_song_ratio=value)
+
+    def test_mc_labels_remain_visible_before_during_and_after_mc(self) -> None:
+        manifest = sample_manifest(3)
+        manifest["presentation"] = {"progress_bar": {
+            "layout": "duration", "mc_label_always": True, "mc_max_song_ratio": 1.2}}
+        events = [line.split(",", 9) for line in render_song_progress_ass(manifest).splitlines() if line.startswith("Dialogue:")]
+        starts = {e[1] for e in events}
+        for start in starts:
+            labels = [e[9] for e in events if e[1] == start and e[3] == "ProgressLabel"]
+            self.assertEqual(2, sum(t.endswith("}MC") for t in labels))
+            self.assertFalse(any(t.endswith("}MC1") or t.endswith("}MC2") for t in labels))
+        fill = next(e for e in events if e[0] == "Dialogue: 11" and e[1] == "0:00:14.00")
+        self.assertIn(r"\t(0,3000,1,\clip", fill[9])
+
+    def test_duration_bounds_preserve_time_ratios_and_triple_mc_weight(self) -> None:
+        sections = [
+            {"type": "song", "start": 0, "end": 10},
+            {"type": "mc", "start": 10, "end": 20},
+            {"type": "song", "start": 20, "end": 40},
+        ]
+        bounds = duration_segment_bounds(sections, x=10, width=608, mc_max_song_ratio=None)
+        self.assertEqual([(10, 110), (114, 414), (418, 618)], bounds)
+        with self.assertRaises(ValueError):
+            duration_segment_bounds(sections, mc_weight=float("nan"))
+        with self.assertRaises(ValueError):
+            duration_segment_bounds(sections, width=8)
+
+    def test_duration_progress_starts_white_and_fills_whole_height(self) -> None:
+        manifest = sample_manifest(2)
+        manifest["presentation"] = {"progress_bar": {"layout": "duration", "mc_weight": 3,
+                                                     "mc_max_song_ratio": None, "mc_label_always": False}}
+        rendered = render_song_progress_ass(manifest)
+        events = [line.split(",", 9) for line in rendered.splitlines() if line.startswith("Dialogue:")]
+        timeline = timeline_sections(manifest)
+        for active, section in enumerate(timeline):
+            bounds = duration_segment_bounds(timeline, active=active,
+                                             mc_max_song_ratio=None,
+                                             requested=label_width(current_label(section)))
+            start = f"0:00:{int(section['start']):02d}.00"
+            cells = [e for e in events if e[0] == "Dialogue: 10" and e[1] == start]
+            self.assertEqual(len(timeline), len(cells))
+            for index, cell in enumerate(cells):
+                self.assertIn("5DC9F4" if index < active else "FFFFFF", cell[9])
+                x0, x1 = bounds[index]
+                top, bottom = (0, 34) if index == active else (8, 26)
+                self.assertTrue(cell[9].endswith(f"m {x0} {top} l {x1} {top} {x1} {bottom} {x0} {bottom}"))
+            fill = next(e[9] for e in events if e[0] == "Dialogue: 11" and e[1] == start)
+            x0, x1 = bounds[active]
+            self.assertIn(f"\\clip({x0},0,{x0},34)", fill)
+            self.assertIn(f"\\clip({x0},0,{x1},34)", fill)
+            self.assertNotIn("fscx", fill)
+            label = next(e[9] for e in events if e[0] == "Dialogue: 12" and e[1] == start)
+            self.assertIn(f"\\an4\\pos({x0 + 8},16)", label)
+
+    def test_duration_expands_only_current_title_and_restores_previous_cell(self) -> None:
+        sections = [
+            {"type": "song", "start": 0, "end": 10},
+            {"type": "mc", "start": 10, "end": 20},
+            {"type": "song", "start": 20, "end": 40},
+        ]
+        first = duration_segment_bounds(sections, width=608, active=0, requested=250, mc_max_song_ratio=None)
+        second = duration_segment_bounds(sections, width=608, active=2, requested=250, mc_max_song_ratio=None)
+        self.assertEqual(250, first[0][1] - first[0][0])
+        self.assertLess(second[0][1] - second[0][0], 250)
+        self.assertEqual(250, second[2][1] - second[2][0])
+        for bounds in (first, second):
+            self.assertEqual(0, bounds[0][0])
+            self.assertEqual(608, bounds[-1][1])
+            self.assertTrue(all(b > a for a, b in bounds))
+        self.assertAlmostEqual(3 / 2, (first[1][1] - first[1][0]) / (first[2][1] - first[2][0]), delta=.02)
+        cramped = duration_segment_bounds(sections, width=608, active=0, requested=9999)
+        self.assertEqual(608, cramped[-1][1])
+        self.assertTrue(all(b > a for a, b in cramped))
+
     def test_review_merges_caption_and_progress_into_one_ass(self) -> None:
         caption = (
             "[V4+ Styles]\n"
@@ -159,7 +290,7 @@ class SongProgressTests(unittest.TestCase):
         rendered = render_song_progress_ass(sample_manifest(17))
         self.assertNotIn("05/17", rendered)
         self.assertNotIn("%", rendered)
-        self.assertIn(r"\t(0,12000,1,\fscx100)", rendered)
+        self.assertIn(r"\t(0,12000,1,\clip", rendered)
 
     def test_labels_and_bar_cover_mc_and_transition_windows(self) -> None:
         rendered = render_song_progress_ass(sample_manifest(2))
@@ -170,9 +301,10 @@ class SongProgressTests(unittest.TestCase):
         self.assertIn("Song 1", rendered)
         self.assertNotIn("Sample Artist", rendered)
         self.assertTrue(any(line.split(",", 3)[1] == "0:00:14.00" for line in dialogue))
-        for label in ("过场", "1.  Song 1", "MC1", "2.  Song 2"):
+        for label in ("过场", "1.  Song 1", "2.  Song 2"):
             self.assertEqual(1, sum(line.endswith("}" + label) for line in dialogue))
-        self.assertEqual(4, sum(",ProgressLabel," in line for line in dialogue))
+        self.assertEqual(4, sum(line.endswith("}MC") for line in dialogue))
+        self.assertEqual(7, sum(",ProgressLabel," in line for line in dialogue))
         self.assertNotIn("}曲", rendered)
         self.assertEqual(
             [(0.0, 6.0), (7.25, 8.75), (12.0, 21.0), (22.25, 23.75), (27.0, 29.0)],
@@ -204,7 +336,7 @@ class SongProgressTests(unittest.TestCase):
 
     def test_mc_only_timeline_is_supported(self) -> None:
         manifest = {"sections": [{"type": "mc", "start": 0, "end": 5}]}
-        self.assertIn("}MC1", render_song_progress_ass(manifest))
+        self.assertIn("}MC", render_song_progress_ass(manifest))
 
     def test_current_cell_hugs_text_and_other_cells_fill_remaining_width(self) -> None:
         short = label_width("2.  口唇")

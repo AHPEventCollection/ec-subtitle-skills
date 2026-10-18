@@ -110,6 +110,8 @@ def record_review(
             missing.add("full_section")
         if "crowded_mc_manual_conform_required" in flag_codes:
             missing.update(CROWDED_MC_REVIEW_POINTS - points)
+        if "singing_attribution_review_required" in flag_codes:
+            missing.update({"singing_attribution"} - points)
         if missing:
             raise ValueError(f"缺少必查点：{', '.join(sorted(missing))}")
         stored_decision = "approved"

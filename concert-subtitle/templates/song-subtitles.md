@@ -8,9 +8,10 @@
 4. 时间相对正式分段起点
 5. 歌词事件完成后运行`detect_embedded_speech.py`，检查开场前、间奏和收尾的歌词外讲话候选
 6. 只有复核过的讲话才可加入`events.json`，必须标记`role: speech`、保留ASR证据并补齐中文翻译
-7. 写入`events.json`和`report.json`
-8. 完成实际审核后才能批准结果
-9. 需要GPU时只通过Skill的GPU队列
+7. 多人演唱按[演唱归属](../references/singing-attribution.md)处理单人、接唱、合唱和未知，结果写入事件的`singing_parts`；不得仅凭镜头或句式确认身份，不改变原文、中文或时间轴
+8. 写入`events.json`和`report.json`
+9. 完成实际审核后才能批准结果，含演唱归属字段时同时完成`singing_attribution`审查点
+10. 需要GPU时只通过Skill的GPU队列
 
 直接完成整首歌，不先做代表段或等待结构推广。完整分段做好后，只有该曲存在合适结构时才单独考虑复用，不把复用作为本段或其他歌曲的前置任务
 

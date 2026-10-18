@@ -129,6 +129,8 @@ python scripts/run_section.py `
 
 歌曲事件也必须提供中文`translation`，不允许以日文单语结果通过双语字幕gate
 
+多人演唱可在同一事件中附加`singing_parts`，字段、证据等级及短句拼接规则见[演唱归属](singing-attribution.md)。不改变原文、译文、时间或事件数量；校验与渲染共用该字段，MC和歌曲内讲话不使用该字段
+
 歌曲分段允许包含经复核的歌词外讲话事件。歌词事件的`role`为`lyric`
 或省略，讲话事件必须标记`role: speech`，并包含：
 

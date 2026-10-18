@@ -302,9 +302,11 @@ def create_manifest(
     }
     if isinstance(raw, dict) and "presentation" in raw:
         manifest["presentation"] = raw["presentation"]
-    from song_progress import render_song_progress_ass
+    from song_progress import progress_bar_config, render_song_progress_ass
 
     render_song_progress_ass(manifest)  # Validate presentation before persisting
+    presentation = manifest.setdefault("presentation", {})
+    presentation["progress_bar"] = progress_bar_config(presentation.get("progress_bar", {}))
     write_json(output_path, manifest)
     return manifest
 

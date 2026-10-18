@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import statistics
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,40 @@ BAR_WIDTH = 1920
 BAR_HEIGHT = 18
 BAR_GAP = 4
 PROGRESS_SUFFIX = "song-progress.ass"
+DEFAULT_PROGRESS_BAR = {
+    "x": BAR_X, "y": BAR_Y, "width": BAR_WIDTH, "height": BAR_HEIGHT,
+    "layout": "duration", "mc_weight": 3, "mc_max_song_ratio": 1.2,
+    "mc_label_always": True, "unplayed_alpha": 102,
+}
+
+
+def progress_bar_config(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve public defaults without mutating the supplied manifest."""
+    if value is not None and not isinstance(value, dict):
+        raise ValueError("progress_bar必须为对象")
+    supplied = {} if value is None else value
+    if set(supplied) - set(DEFAULT_PROGRESS_BAR):
+        raise ValueError("progress_bar包含未知字段")
+    bar = {**DEFAULT_PROGRESS_BAR, **supplied}
+    if any(type(bar[key]) is not int for key in ("x", "y", "width", "height")) or not (
+        0 <= bar["x"] < PLAY_RES_X and 8 <= bar["y"] < PLAY_RES_Y
+        and 0 < bar["width"] <= PLAY_RES_X - bar["x"]
+        and 0 < bar["height"] <= PLAY_RES_Y - bar["y"] - 8
+    ):
+        raise ValueError("progress_bar必须为画面内整数坐标和正尺寸，上下各保留8像素")
+    if bar["layout"] not in ("duration", "label_fit"):
+        raise ValueError("progress_bar.layout只允许label_fit或duration")
+    for key in ("mc_weight", "mc_max_song_ratio"):
+        number = bar[key]
+        if key == "mc_max_song_ratio" and number is None:
+            continue
+        if type(number) not in (int, float) or not math.isfinite(number) or number <= 0:
+            raise ValueError(f"{key}必须为正数")
+    if type(bar["mc_label_always"]) is not bool:
+        raise ValueError("mc_label_always必须为布尔值")
+    if type(bar["unplayed_alpha"]) is not int or not 0 <= bar["unplayed_alpha"] <= 255:
+        raise ValueError("unplayed_alpha必须为0至255的整数")
+    return bar
 
 
 def timeline_sections(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -205,17 +240,115 @@ def active_segment_bounds(total: int, active: int, requested: int, *,
     return bounds
 
 
+def duration_segment_bounds(sections: list[dict[str, Any]], *, mc_weight: float = 3,
+                            x: int = BAR_X, width: int = BAR_WIDTH,
+                            active: int | None = None, requested: int = 0,
+                            mc_max_song_ratio: float | None = 1.2) -> list[tuple[int, int]]:
+    """Use time-weighted widths, expanding only the active cell to fit its label."""
+    if not sections or not math.isfinite(mc_weight) or mc_weight <= 0:
+        raise ValueError("时长比例进度条需要有效分段和正数MC权重")
+    gap = BAR_GAP if len(sections) <= 30 else 2
+    available = width - gap * (len(sections) - 1)
+    weights = [(float(s["end"]) - float(s["start"])) *
+               (mc_weight if s["type"] == "mc" else 1) for s in sections]
+    if any(not math.isfinite(w) or w <= 0 for w in weights):
+        raise ValueError("进度条分段时长必须为正数")
+    if mc_max_song_ratio is not None:
+        if isinstance(mc_max_song_ratio, bool) or not math.isfinite(mc_max_song_ratio) or mc_max_song_ratio <= 0:
+            raise ValueError("mc_max_song_ratio必须为正数")
+        song_weights = [w for s, w in zip(sections, weights) if s["type"] == "song"]
+        if song_weights:
+            cap = statistics.median(song_weights) * mc_max_song_ratio
+            weights = [min(w, cap) if s["type"] == "mc" else w for s, w in zip(sections, weights)]
+    total, cumulative, previous = sum(weights), 0.0, 0
+    bounds = []
+    for index, weight in enumerate(weights):
+        cumulative += weight
+        edge = round(available * cumulative / total)
+        if edge - previous < 1:
+            raise ValueError("按时长分配后有进度块不足1像素，请增加进度条宽度")
+        bounds.append((x + previous + index * gap, x + edge + index * gap))
+        previous = edge
+    if active is not None:
+        if not 0 <= active < len(sections):
+            raise ValueError("进度段索引非法")
+        current = min(max(requested, bounds[active][1] - bounds[active][0]),
+                      available - (len(sections) - 1))
+        if current > bounds[active][1] - bounds[active][0]:
+            # Reserve a visible pixel for each inactive cell, then allocate the
+            # remaining space proportionally. The active cell returns to its
+            # duration width as soon as the next section starts.
+            remaining = available - current - (len(sections) - 1)
+            other_total = total - weights[active]
+            cumulative, previous, cursor, bounds = 0.0, 0, x, []
+            for index, weight in enumerate(weights):
+                if index == active:
+                    cell_width = current
+                else:
+                    cumulative += weight
+                    edge = round(remaining * cumulative / other_total)
+                    cell_width = 1 + edge - previous
+                    previous = edge
+                bounds.append((cursor, cursor + cell_width))
+                cursor += cell_width + gap
+    return bounds
+
+
+def _duration_progress_events(sections: list[dict[str, Any]], bar: dict[str, Any]) -> list[str]:
+    unplayed_alpha = bar.get("unplayed_alpha", DEFAULT_PROGRESS_BAR["unplayed_alpha"])
+    if type(unplayed_alpha) is not int or not 0 <= unplayed_alpha <= 255:
+        raise ValueError("unplayed_alpha必须为0至255的整数")
+    mc_label_always = bar.get("mc_label_always", DEFAULT_PROGRESS_BAR["mc_label_always"])
+    if type(mc_label_always) is not bool:
+        raise ValueError("mc_label_always必须为布尔值")
+    top, bottom = bar["y"], bar["y"] + bar["height"]
+    events = []
+    for current, section in enumerate(sections):
+        start, end = float(section["start"]), float(section["end"])
+        label = "MC" if mc_label_always and section["type"] == "mc" else current_label(section)
+        requested = label_width(label)
+        bounds = duration_segment_bounds(sections, mc_weight=float(bar.get("mc_weight", 3)),
+                                         x=bar["x"], width=bar["width"],
+                                         active=current, requested=requested,
+                                         mc_max_song_ratio=bar.get("mc_max_song_ratio", 1.2))
+        for index, (x0, x1) in enumerate(bounds):
+            # The current cell starts white too; only the elapsed region is colored.
+            color = "5DC9F4" if index < current else "FFFFFF"
+            alpha = 0 if index < current else unplayed_alpha
+            events.append(_dialogue(
+                10, start, end, "ProgressDrawing",
+                r"{\an7\pos(0,0)\p1\bord0\shad0" +
+                f"\\1c&H{color}&\\alpha&H{alpha:02X}&}}" +
+                _rectangle(x0, top - 8 if index == current else top,
+                           x1, bottom + 8 if index == current else bottom),
+            ))
+            if mc_label_always and sections[index]["type"] == "mc" and index != current:
+                scale = min(100, max(1, x1 - x0 - 4) / max(1, (label_width("MC") - 16) * 16 / 24) * 100)
+                events.append(_dialogue(
+                    12, start, end, "ProgressLabel",
+                    f"{{\\an5\\pos({(x0 + x1) / 2:g},{(top + bottom) / 2:g})\\fs16\\fscx{scale:g}}}MC",
+                ))
+        x0, x1 = bounds[current]
+        duration_ms = max(1, round((end - start) * 1000))
+        events.append(_dialogue(
+            11, start, end, "ProgressDrawing",
+            r"{\an7\pos(0,0)\p1\bord0\shad0\1c&H5DC9F4&\alpha&H00&" +
+            f"\\clip({x0},{top - 8},{x0},{bottom + 8})"
+            f"\\t(0,{duration_ms},1,\\clip({x0},{top - 8},{x1},{bottom + 8}))}}" +
+            _rectangle(x0, top - 8, x1, bottom + 8),
+        ))
+        scale = min(100, max(1, x1 - x0 - 16) / max(1, requested - 16) * 100)
+        events.append(_dialogue(
+            12, start, end, "ProgressLabel",
+            f"{{\\an4\\pos({x0 + 8},{(top + bottom) / 2 - 1:g})\\fscx{scale:g}}}" + _ass_escape(label),
+        ))
+    return events
+
+
 def render_song_progress_ass(manifest: dict[str, Any]) -> str:
     sections = timeline_sections(manifest)
     presentation = manifest.get("presentation", {})
-    bar = {"x": BAR_X, "y": BAR_Y, "width": BAR_WIDTH, "height": BAR_HEIGHT}
-    bar.update(presentation.get("progress_bar", {}))
-    if any(type(bar[key]) is not int for key in ("x", "y", "width", "height")) or not (
-        0 <= bar["x"] < PLAY_RES_X and 8 <= bar["y"] < PLAY_RES_Y
-        and 0 < bar["width"] <= PLAY_RES_X - bar["x"]
-        and 0 < bar["height"] <= PLAY_RES_Y - bar["y"] - 8
-    ):
-        raise ValueError("progress_bar必须为画面内整数坐标和正尺寸，上下各保留8像素")
+    bar = progress_bar_config(presentation.get("progress_bar", {}))
     top, bottom = bar["y"] - 8, bar["y"] + bar["height"] + 8
     header = f"""[Script Info]
 ; Generated by concert-subtitle v{VERSION}
@@ -235,6 +368,11 @@ Style: ProgressLabel,Yu Gothic,24,&H0018191C,&H0018191C,&H00000000,&H00000000,-1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    layout = bar["layout"]
+    if layout == "duration":
+        return header + "\n".join(_duration_progress_events(sections, bar)) + "\n"
+    if layout != "label_fit":
+        raise ValueError("progress_bar.layout只允许label_fit或duration")
     dialogue: list[str] = []
     for current, section in enumerate(sections):
         start, end = float(section["start"]), float(section["end"])

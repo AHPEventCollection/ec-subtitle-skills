@@ -10,6 +10,7 @@ from assess_mc_complexity import (
     load_assessment,
     validate_assessment,
 )
+from singing_attribution import validate_singing_events
 from common import (
     SCHEMA_VERSION,
     SOURCE_MAX_DISPLAY_UNITS,
@@ -283,6 +284,9 @@ def validate_section(section_dir: Path, update: bool = True) -> dict[str, Any]:
                     }
                 )
 
+    hard_failures.extend(validate_singing_events(events, package["section_type"]))
+    if any("singing_parts" in event for event in events):
+        review_flags.append({"code": "singing_attribution_review_required"})
     previous_start = -1.0
     previous_end = -1.0
     for index, event in enumerate(events):

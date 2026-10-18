@@ -62,7 +62,12 @@
             "x": {"type": "integer", "minimum": 0, "maximum": 1919},
             "y": {"type": "integer", "minimum": 8, "maximum": 1071},
             "width": {"type": "integer", "minimum": 1, "maximum": 1920},
-            "height": {"type": "integer", "minimum": 1, "maximum": 1080}
+            "height": {"type": "integer", "minimum": 1, "maximum": 1064, "default": 18},
+            "layout": {"enum": ["duration", "label_fit"], "default": "duration"},
+            "mc_weight": {"type": "number", "exclusiveMinimum": 0, "default": 3},
+            "mc_max_song_ratio": {"type": ["number", "null"], "exclusiveMinimum": 0, "default": 1.2},
+            "mc_label_always": {"type": "boolean", "default": true},
+            "unplayed_alpha": {"type": "integer", "minimum": 0, "maximum": 255, "default": 102}
           },
           "additionalProperties": false
         }

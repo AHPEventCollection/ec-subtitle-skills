@@ -149,6 +149,8 @@ class PreflightRoutingTests(unittest.TestCase):
         self.assertEqual("transcoded_preview", manifest["review_media_kind"])
         self.assertTrue(manifest["presentation"]["source_song_titles"])
         self.assertEqual("recap", manifest["presentation"]["timeline_extras"][0]["type"])
+        from song_progress import DEFAULT_PROGRESS_BAR
+        self.assertEqual(DEFAULT_PROGRESS_BAR, manifest["presentation"]["progress_bar"])
 
 
 @unittest.skipUnless(
