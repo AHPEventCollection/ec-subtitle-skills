@@ -76,7 +76,7 @@ def _is_japanese(value: str) -> bool:
 def _bilingual(lines: list[str]) -> tuple[str, str]:
     cleaned = [_clean_line(line) for line in lines if _clean_line(line)]
     if len(cleaned) != 2:
-        raise ValueError("每条字幕必须恰好包含中文和日文两行")
+        raise ValueError("每条字幕必须恰好包含中文和原文两行")
     first, second = cleaned
     if _is_japanese(first) and not _is_japanese(second):
         return second, first

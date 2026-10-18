@@ -29,6 +29,7 @@ from mv_pipeline import (
     build_parser,
     build_subtitle,
     delivery_check,
+    delivery_status,
     download_source,
     finish,
     initialize,
@@ -37,6 +38,7 @@ from mv_pipeline import (
     stage_delivery,
 )
 from chinese_source import record_chinese_source
+from review_checks import HUMAN_CHECK_ITEMS, MACHINE_CHECK_RESULTS
 from subtitle_io import (
     Cue,
     format_review_timestamp,
@@ -45,6 +47,7 @@ from subtitle_io import (
     merge_lrc,
     parse_review_timestamp,
     render_srt,
+    render_ass,
 )
 from youtube_acquire import AcquisitionResult
 
@@ -518,7 +521,8 @@ class ArtifactWorkflowTests(unittest.TestCase):
                 result = finish(mv_dir, candidate)
 
             self.assertEqual(status, result)
-            self.assertTrue((mv_dir / "subtitle" / "master.srt").is_file())
+            self.assertTrue((mv_dir / "subtitle" / "master.ass").is_file())
+            self.assertFalse((mv_dir / "subtitle" / "master.srt").exists())
             self.assertEqual(
                 ["style", "preview", "render", "validate", "delivery-status"],
                 calls,
@@ -530,7 +534,7 @@ class ArtifactWorkflowTests(unittest.TestCase):
             mv_dir = root / "workspace" / "mvs" / "fixture"
             with patch.object(common, "project_root", return_value=root):
                 initialize(mv_dir)
-            (mv_dir / "subtitle" / "master.srt").write_text(SRT, encoding="utf-8")
+            (mv_dir / "subtitle" / "master.ass").write_text(render_ass([Cue(1, 3, "译文", "original lyric")], "fixture"), encoding="utf-8")
 
             with (
                 patch.object(common, "project_root", return_value=root),
@@ -707,19 +711,33 @@ class ArtifactWorkflowTests(unittest.TestCase):
                 )
                 (mv_dir / "source" / "source.md").write_text("source", encoding="utf-8")
                 (mv_dir / "lyrics" / "lookup.md").write_text("lyrics", encoding="utf-8")
-                (mv_dir / "subtitle" / "master.srt").write_text(SRT, encoding="utf-8")
+                (mv_dir / "subtitle" / "master.ass").write_text(render_ass([Cue(1, 3, "译文", "original lyric")], "fixture"), encoding="utf-8")
                 record_chinese_source(mv_dir, "netease")
-                (mv_dir / "review" / "final-v01-machine-check.md").write_text(
-                    "passed", encoding="utf-8"
+                machine = mv_dir / "review" / "final-v01-machine-check.md"
+                human = mv_dir / "review" / "final-v01-human-check.md"
+                machine.write_text(
+                    "\n".join(["# 成品机器检查v01", f"- 成品　{output / 'fixture.hardsub.v01.mp4'}",
+                               *MACHINE_CHECK_RESULTS]), encoding="utf-8",
                 )
-                (mv_dir / "review" / "final-v01-human-check.md").write_text(
-                    "- [x] checked\n", encoding="utf-8"
+                human.write_text(
+                    "\n".join(["# 成品人工检查v01", *(f"- [x] {item}" for item in HUMAN_CHECK_ITEMS)]),
+                    encoding="utf-8",
                 )
 
                 report = delivery_check(mv_dir)
 
             self.assertTrue(report.is_file())
             self.assertNotIn("- [ ]", report.read_text(encoding="utf-8"))
+            status = delivery_status(mv_dir).read_text(encoding="utf-8")
+            self.assertIn("- [x] 机器检查", status)
+            self.assertIn("- [x] 人工检查", status)
+            machine.write_text("", encoding="utf-8")
+            human.write_text("", encoding="utf-8")
+            status = delivery_status(mv_dir).read_text(encoding="utf-8")
+            self.assertIn("- [ ] 机器检查", status)
+            self.assertIn("- [ ] 人工检查", status)
+            with self.assertRaisesRegex(ValueError, "机器检查未通过"):
+                delivery_check(mv_dir)
 
     def test_delivery_rejects_combined_copy_missing_platform_section(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -742,7 +760,7 @@ class ArtifactWorkflowTests(unittest.TestCase):
                 )
                 (mv_dir / "source" / "source.md").write_text("source", encoding="utf-8")
                 (mv_dir / "lyrics" / "lookup.md").write_text("lyrics", encoding="utf-8")
-                (mv_dir / "subtitle" / "master.srt").write_text(SRT, encoding="utf-8")
+                (mv_dir / "subtitle" / "master.ass").write_text(render_ass([Cue(1, 3, "译文", "original lyric")], "fixture"), encoding="utf-8")
                 record_chinese_source(mv_dir, "netease")
                 (mv_dir / "review" / "final-v01-machine-check.md").write_text(
                     "passed", encoding="utf-8"

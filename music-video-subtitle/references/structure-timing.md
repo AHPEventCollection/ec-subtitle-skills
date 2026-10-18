@@ -57,6 +57,6 @@ python scripts/mv_pipeline.py structure-propose --mv-dir "<mv-dir>"
 python scripts/mv_pipeline.py build-subtitle --mv-dir "<mv-dir>" --candidate "<mv-dir>/review/structure/structure-candidate.srt"
 ```
 
-入口重新回读初稿、结构、代表段、音频参考与逐行覆盖记录，拒绝过期结果。此后继续既有样式、预览和出片流程，不引入演唱会状态机，不自动覆盖`subtitle/master.srt`
+入口重新回读初稿、结构、代表段、音频参考与逐行覆盖记录，拒绝过期结果。此后继续既有样式、预览和出片流程，不引入演唱会状态机，不自动覆盖`subtitle/master.ass`
 
 修改过的代表SRT和整曲候选不自动覆盖。重新定位或改变模板时，由主线程将现有`review/structure`目录改名保留为审核备份，再运行`structure-prepare`建立新一轮；不删除旧目录或要求用户整理文件，也不能重跑初稿后跳过已经校准的代表段

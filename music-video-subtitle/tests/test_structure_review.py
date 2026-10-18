@@ -38,7 +38,7 @@ class MvStructureIntegrationTests(unittest.TestCase):
                     "structure_review._onsets", return_value=[]):
                 prepare_structure(mv, initial, "1")
                 candidate = propose_structure(mv)
-                self.assertTrue((mv / "review" / "candidate-preview" / "source.srt").exists())
+                self.assertTrue((mv / "review" / "preview" / "source.srt").exists())
                 with self.assertRaisesRegex(ValueError, "重叠"):
                     validate_structure_promotion(mv, candidate)
                 revised = normalized_events(read_tsv(mv / "review" / "structure" / "candidate-events.tsv"))
@@ -48,7 +48,7 @@ class MvStructureIntegrationTests(unittest.TestCase):
                 preview_structure(mv)
                 validate_structure_promotion(mv, candidate)
                 self.assertEqual(before, candidate.read_bytes())
-                self.assertEqual(before, (mv / "review" / "candidate-preview" / "source.srt").read_bytes())
+                self.assertEqual(before, (mv / "review" / "preview" / "source.srt").read_bytes())
                 self.assertFalse((mv / "subtitle" / "master.srt").exists())
 
     def test_official_source_is_revalidated_before_structural_prepare(self):
@@ -84,7 +84,7 @@ class MvStructureIntegrationTests(unittest.TestCase):
                     validate_structure_promotion(mv, candidate)
                     # Switching to an older reference must refresh the paired SRT.
                     prepare_structure(mv, initial, "2")
-                    paired = mv / "review" / "candidate-preview" / "source.srt"
+                    paired = mv / "review" / "preview" / "source.srt"
                     self.assertEqual(reference.read_bytes(), paired.read_bytes())
                     preview_structure(mv)
                     self.assertEqual(candidate.read_bytes(), paired.read_bytes())
@@ -95,7 +95,8 @@ class MvStructureIntegrationTests(unittest.TestCase):
                     with self.assertRaises(FileExistsError):
                         build_subtitle(mv, candidate)
                     self.assertEqual(before, master.read_bytes())
-            self.assertEqual(b"unchanged full video", source.read_bytes())
+            self.assertEqual(b"unchanged full video", (mv / "review/preview/source.mkv").read_bytes())
+            self.assertFalse(source.exists())
             self.assertFalse(list((mv / "review" / "structure").glob("*.json")))
 
 

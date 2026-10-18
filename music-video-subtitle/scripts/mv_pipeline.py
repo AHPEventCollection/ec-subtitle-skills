@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from common import (
     find_master_subtitle,
     find_source_video,
     find_styled_ass,
+    preview_source,
     latest_version,
     media_summary,
     next_version,
@@ -30,7 +32,7 @@ from common import (
     resolve_binary,
     write_text,
 )
-from delivery_copy import copy_delivery
+from delivery_copy import archive_workspace, verify_workspace_archive
 from lyrics_source import fetch_for_workspace
 from official_subtitle import (
     apply_official_translations,
@@ -44,13 +46,13 @@ from official_subtitle import (
 from runtime_manager import dispatch_script_in_profile
 from song_candidate import build_song_candidate, _sample_source_frames
 from review_images import contact_sheet
+from review_checks import HUMAN_CHECK_ITEMS, MACHINE_CHECK_RESULTS, review_check_issues
 from subtitle_io import (
     Cue,
     format_review_timestamp,
     load_cues,
     parse_review_timestamp,
     render_ass,
-    render_srt,
 )
 from youtube_acquire import acquire_source
 from youtube_cover import prepare_youtube_cover, prepared_youtube_cover, youtube_video_id
@@ -73,7 +75,7 @@ def prepare_official_review(
     from concurrent.futures import ThreadPoolExecutor
 
     mv_dir = ensure_workspace(mv_dir)
-    source = find_source_video(mv_dir)
+    source = preview_source(mv_dir)
     ffmpeg = str(resolve_binary("ffmpeg"))
     with ThreadPoolExecutor(max_workers=2) as executor:
         frames = executor.submit(_sample_source_frames, mv_dir, source, ffmpeg)
@@ -98,15 +100,18 @@ def import_source(mv_dir: Path, source: Path) -> Path:
     source = source.resolve()
     if not source.is_file():
         raise FileNotFoundError(f"源视频不存在：{source}")
+    preview_dir = mv_dir / "review" / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
     existing = [
         path
-        for path in (mv_dir / "source").iterdir()
+        for directory in (mv_dir / "source", preview_dir)
+        for path in directory.iterdir()
         if path.is_file()
         and path.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
     ]
     if existing:
-        raise FileExistsError("source目录已有视频，拒绝覆盖")
-    destination = mv_dir / "source" / f"source{source.suffix.lower()}"
+        raise FileExistsError("工作区已有片源，拒绝覆盖")
+    destination = preview_dir / f"source{source.suffix.lower()}"
     shutil.copy2(source, destination)
     info = probe_media(destination)
     write_text(
@@ -172,7 +177,7 @@ def acquire_lyrics(mv_dir: Path, cookie_file: Path | None = None) -> Path:
     candidate = fetch_for_workspace(mv_dir, cookie_file)
     if candidate.coverage < 1.0 or not candidate.translation:
         raise ValueError(
-            "网易云候选没有完整日中双语覆盖，已保留查询结果，请补齐chinese.lrc后继续"
+            "已获取匹配歌曲的日文歌词并保留原文；中文缺失或对应关系未核验，请补齐并核对chinese.lrc后继续"
         )
     record_chinese_source(mv_dir, "netease")
     return mv_dir / "lyrics" / "lookup.md"
@@ -201,8 +206,8 @@ def prepare_official_route(
 
 def build_subtitle(mv_dir: Path, candidate: Path) -> Path:
     mv_dir = ensure_workspace(mv_dir)
-    destination = mv_dir / "subtitle" / "master.srt"
-    if destination.exists():
+    destination = mv_dir / "subtitle" / "master.ass"
+    if any((destination.parent / f"master{suffix}").exists() for suffix in (".ass", ".srt", ".ssa")):
         raise FileExistsError(f"审定字幕已存在，拒绝覆盖：{destination}")
     candidate = candidate.resolve()
     candidate_root = (mv_dir / "review" / "alignment" / "candidates").resolve()
@@ -219,7 +224,7 @@ def build_subtitle(mv_dir: Path, candidate: Path) -> Path:
     if candidate.name == "official-subtitle.srt":
         validate_official_candidate(mv_dir, candidate)
     cues = load_cues(candidate)
-    write_text(destination, render_srt(cues))
+    write_text(destination, render_ass(cues, mv_dir.name))
     write_text(
         mv_dir / "subtitle" / "review.md",
         "\n".join(
@@ -236,7 +241,7 @@ def build_subtitle(mv_dir: Path, candidate: Path) -> Path:
                 "- [ ] 已检查中文含义、重复副歌和专有名词",
                 "- [ ] 已检查最后一句消失时间",
                 "",
-                "机器候选只提供可编辑起点，完成全部人工检查后master.srt才是审定字幕",
+                "机器候选只提供可编辑起点，完成全部人工检查后master.ass才是审定字幕",
                 "",
             ]
         ),
@@ -257,15 +262,18 @@ def style_subtitle(mv_dir: Path, ffprobe_value: str | None = None) -> Path:
     )
     play_res_x, play_res_y = info.play_res
     output = mv_dir / "work" / f"{mv_dir.name}.styled.ass"
-    write_text(
-        output,
-        render_ass(
-            load_cues(subtitle),
-            title,
-            play_res_x=play_res_x,
-            play_res_y=play_res_y,
-        ),
-    )
+    load_cues(subtitle)
+    if subtitle.suffix.lower() == ".ass":
+        # Preserve hand-edited ASS text, timing, styles and event overrides.
+        content = subtitle.read_text(encoding="utf-8-sig")
+        content = re.sub(r"(?m)^PlayResX:.*$", f"PlayResX: {play_res_x}", content)
+        content = re.sub(r"(?m)^PlayResY:.*$", f"PlayResY: {play_res_y}", content)
+    else:
+        content = render_ass(load_cues(subtitle), title,
+                             play_res_x=play_res_x, play_res_y=play_res_y)
+        # One-time legacy migration; preserve the existing human source.
+        write_text(mv_dir / "subtitle" / "master.ass", content)
+    write_text(output, content)
     return output
 
 
@@ -330,7 +338,7 @@ def _preview_windows(
     disappearance = cues[-1].end
     if disappearance >= duration - 0.2:
         raise ValueError(
-            "末句字幕延续到片尾，无法检查消失画面；请先在master.srt中审定末句出点"
+            "末句字幕延续到片尾，无法检查消失画面；请先在master.ass中审定末句出点"
         )
     windows.append(
         {
@@ -354,7 +362,7 @@ def preview(
     ffprobe_value: str | None = None,
 ) -> Path:
     mv_dir = ensure_workspace(mv_dir)
-    source = find_source_video(mv_dir)
+    source = preview_source(mv_dir)
     styled = find_styled_ass(mv_dir)
     master = find_master_subtitle(mv_dir)
     _require_fresh(styled, [source, master], "标准ASS已过期，请先重新运行style")
@@ -373,10 +381,12 @@ def preview(
         legacy_path.unlink(missing_ok=True)
     preview_video = preview_dir / source.name
     preview_ass = preview_dir / f"{source.stem}.ass"
-    if (not preview_video.is_file()
-            or preview_video.stat().st_size != source.stat().st_size
-            or preview_video.stat().st_mtime_ns != source.stat().st_mtime_ns):
-        shutil.copy2(source, preview_video)
+    candidate_srt = preview_dir / f"{source.stem}.srt"
+    if candidate_srt.is_file():
+        saved_candidate = preview_dir / f"{source.stem}.candidate.srt"
+        if saved_candidate.exists():
+            raise FileExistsError(f"候选预览备份已存在，请先核对：{saved_candidate}")
+        candidate_srt.rename(saved_candidate)
     shutil.copy2(styled, preview_ass)
     rows = ["label\tstart\tend\tvideo\tsubtitle"]
     report = [
@@ -438,15 +448,16 @@ def finish(
     # Validate options before creating any formal subtitle or media output.
     _encoder_arguments(encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
     mv_dir = ensure_workspace(mv_dir)
-    master = mv_dir / "subtitle" / "master.srt"
+    masters = [mv_dir / "subtitle" / name for name in ("master.ass", "master.srt", "master.ssa")]
+    master = next((path for path in masters if path.is_file()), masters[0])
     if master.is_file() and candidate is not None:
         raise ValueError(
-            "master.srt已存在，直接审定该文件后运行finish，不要再次传入候选"
+            "审定字幕已存在，直接审定ASS后运行finish，不要再次传入候选"
         )
     if not master.is_file():
         if candidate is None:
             raise FileNotFoundError(
-                "master.srt不存在，首次出片必须传入已确认的--candidate"
+                "master.ass不存在，首次出片必须传入已确认的--candidate"
             )
         step("采用审定候选", build_subtitle, mv_dir, candidate)
     step("标准字幕", style_subtitle, mv_dir, ffprobe_value)
@@ -673,6 +684,8 @@ def validate(
         if video
         else mv_dir / "output" / f"{mv_dir.name}.hardsub.v{version:02d}.mp4"
     )
+    report = mv_dir / "review" / f"final-v{version:02d}-machine-check.md"
+    write_text(report, f"# 成品机器检查v{version:02d}\n\n- 成品　{final}\n- 检查状态　未完成\n")
     ffmpeg = resolve_binary("ffmpeg", ffmpeg_value)
     completed = subprocess.run(
         [
@@ -737,7 +750,6 @@ def validate(
             )
     contact_sheet(sorted(frames_dir.glob("*.jpg")),
                   mv_dir / "review" / f"final-v{version:02d}-contact-sheet.jpg")
-    report = mv_dir / "review" / f"final-v{version:02d}-machine-check.md"
     write_text(
         report,
         "\n".join(
@@ -747,10 +759,7 @@ def validate(
                 f"- 成品　{final}",
                 f"- 媒体　{final_info.width}×{final_info.height} / {final_info.duration:.3f}秒 / {final_info.video_codec}+{final_info.audio_codec}",
                 f"- 文件大小　{final.stat().st_size / 1048576:.2f}MiB",
-                "- 完整音视频解码　通过",
-                "- 画面尺寸　与源视频一致",
-                "- 时长差异　不超过0.25秒",
-                "- 音轨内容　与源视频一致",
+                *MACHINE_CHECK_RESULTS,
                 "",
                 "## 待人工查看画面",
                 "",
@@ -769,13 +778,7 @@ def validate(
                 [
                     f"# 成品人工检查v{version:02d}",
                     "",
-                    "- [ ] 已播放开头、中段、结尾并确认时间轴没有整体偏移或后段漂移",
-                    "- [ ] 已查看全部抽帧并确认中日文字体、颜色、位置和边缘正常",
-                    "- [ ] 已确认最长字幕仍可阅读",
-                    "- [ ] 已确认亮场和暗场字幕清楚",
-                    "- [ ] 已确认最后一句正常消失",
-                    "- [ ] 已确认音画同步和拖动播放正常",
-                    "- [ ] 已确认封面原尺寸和缩小显示正常",
+                    *(f"- [ ] {item}" for item in HUMAN_CHECK_ITEMS),
                     "",
                 ]
             ),
@@ -992,8 +995,6 @@ def delivery_status(mv_dir: Path) -> Path:
         for path in output.glob(f"{mv_dir.name}.cover.v{version:02d}.*")
         if path.suffix.lower() in IMAGE_SUFFIXES
     ]
-    machine = mv_dir / "review" / f"final-v{version:02d}-machine-check.md"
-    human = mv_dir / "review" / f"final-v{version:02d}-human-check.md"
     copy_ready = publish_copy.is_file() and _copy_ready(
         publish_copy,
         source_credit,
@@ -1006,21 +1007,23 @@ def delivery_status(mv_dir: Path) -> Path:
                 cover_ready = cover.width >= 720 and cover.height >= 720
         except OSError:
             cover_ready = False
-    human_ready = human.is_file() and "- [ ]" not in human.read_text(
-        encoding="utf-8-sig"
-    )
+    review_issues = review_check_issues(mv_dir, version)
     checks = (
         ("硬字幕MP4", video.is_file()),
         ("同版本ASS", ass.is_file()),
         (f"平台正式文案（{platform_label}）", copy_ready),
         ("本支YouTube视频封面或对应发行封面", cover_ready),
-        ("机器检查", machine.is_file()),
-        ("人工检查", human_ready),
+        ("机器检查", not review_issues["machine"]),
+        ("人工检查", not review_issues["human"]),
     )
     complete = all(ready for _, ready in checks)
     report = output / f"delivery-status.v{version:02d}.md"
     lines = [f"# MV交付状态v{version:02d}", ""]
     lines.extend(f"- [{'x' if ready else ' '}] {label}" for label, ready in checks)
+    for label, kind in (("机器检查", "machine"), ("人工检查", "human")):
+        if review_issues[kind]:
+            lines.extend(["", f"{label}未通过的原因", ""])
+            lines.extend(f"- {issue}" for issue in review_issues[kind])
     lines.extend(
         [
             "",
@@ -1071,15 +1074,15 @@ def delivery_check(mv_dir: Path) -> Path:
     with Image.open(covers[0]) as cover:
         if cover.width < 720 or cover.height < 720:
             raise ValueError(f"封面尺寸不足：{cover.width}x{cover.height}")
-    human = mv_dir / "review" / f"final-v{version:02d}-human-check.md"
-    if not human.is_file() or "- [ ]" in human.read_text(encoding="utf-8-sig"):
-        raise ValueError("成品人工检查尚未全部勾选")
-    if not (mv_dir / "review" / f"final-v{version:02d}-machine-check.md").is_file():
-        raise FileNotFoundError("缺少成品机器检查报告")
+    review_issues = review_check_issues(mv_dir, version)
+    if review_issues["machine"]:
+        raise ValueError("成品机器检查未通过：" + "；".join(review_issues["machine"]))
+    if review_issues["human"]:
+        raise ValueError("成品人工检查未通过：" + "；".join(review_issues["human"]))
     for path in (
         mv_dir / "source" / "source.md",
         mv_dir / "lyrics" / "lookup.md",
-        mv_dir / "subtitle" / "master.srt",
+        mv_dir / "subtitle" / "master.ass",
     ):
         if not path.is_file():
             raise FileNotFoundError(f"项目缺少可复用来源文件：{path}")
@@ -1106,10 +1109,10 @@ def delivery_check(mv_dir: Path) -> Path:
     return report
 
 
-def archive_delivery(mv_dir: Path, destination: Path) -> Path:
-    mv_dir = ensure_workspace(mv_dir)
-    delivery_check(mv_dir)
-    return copy_delivery(mv_dir / "output", destination)
+def archive_delivery(mv_dir: Path, destination: Path, verify_only: bool = False) -> Path:
+    # 归档保留当前事实，未完成的人工作业不得被伪造为验收通过
+    operation = verify_workspace_archive if verify_only else archive_workspace
+    return operation(mv_dir, destination)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1162,7 +1165,7 @@ def build_parser() -> argparse.ArgumentParser:
     chinese_source_parser.add_argument(
         "--kind",
         required=True,
-        choices=("netease", "translation-model"),
+        choices=("official", "netease", "translation-model"),
     )
     chinese_source_parser.add_argument("--model")
 
@@ -1257,6 +1260,7 @@ def build_parser() -> argparse.ArgumentParser:
     archive_parser = subparsers.add_parser("archive")
     archive_parser.add_argument("--mv-dir", required=True, type=Path)
     archive_parser.add_argument("--destination", required=True, type=Path)
+    archive_parser.add_argument("--verify-only", action="store_true")
     return parser
 
 
@@ -1384,7 +1388,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.action == "delivery-check":
             result = delivery_check(args.mv_dir)
         else:
-            result = archive_delivery(args.mv_dir, args.destination)
+            result = archive_delivery(args.mv_dir, args.destination, args.verify_only)
     except Exception as error:
         print(f"error={error}", file=sys.stderr)
         return 2

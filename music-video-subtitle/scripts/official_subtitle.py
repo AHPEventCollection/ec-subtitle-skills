@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -16,7 +17,6 @@ from subtitle_io import Cue, format_review_timestamp, load_cues, render_srt
 
 
 SUBTITLE_SUFFIXES = {".vtt", ".srt", ".ass", ".ssa"}
-JAPANESE_NAME = re.compile(r"(?:^|[._-])(?:ja|jpn)(?:[._-]|$)", re.IGNORECASE)
 TIMELINE = re.compile(
     r"(?P<start>(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{2,3})\s*-->\s*"
     r"(?P<end>(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{2,3})"
@@ -164,9 +164,19 @@ def load_official_cues(path: Path) -> list[OfficialCue]:
     raise ValueError(f"不支持的官方字幕格式：{path.suffix}")
 
 
-def _contains_japanese(cues: list[OfficialCue]) -> bool:
-    sample = "".join(cue.japanese for cue in cues[:20])
-    return any("\u3040" <= character <= "\u30ff" for character in sample)
+def _track_language(path: Path) -> str:
+    return path.stem.rsplit(".", 1)[-1].lower().replace("_", "-")
+
+
+def _source_language(source_dir: Path) -> str:
+    preference = source_dir / "language.txt"
+    if preference.is_file():
+        return preference.read_text(encoding="utf-8-sig").strip().lower().replace("_", "-")
+    for metadata in sorted(source_dir.glob("*.info.json")):
+        value = json.loads(metadata.read_text(encoding="utf-8-sig")).get("language")
+        if value:
+            return str(value).lower().replace("_", "-")
+    return ""
 
 
 def discover_official_subtitle(mv_dir: Path) -> Path | None:
@@ -176,15 +186,22 @@ def discover_official_subtitle(mv_dir: Path) -> Path | None:
         for path in source_dir.iterdir()
         if path.is_file() and path.suffix.casefold() in SUBTITLE_SUFFIXES
     )
-    named = [path for path in candidates if JAPANESE_NAME.search(path.name)]
-    if len(named) == 1:
-        return named[0]
-    if len(named) > 1:
-        raise ValueError("发现多份官方日文字幕，请用--subtitle明确指定")
-    if len(candidates) == 1 and _contains_japanese(load_official_cues(candidates[0])):
+    # The downloader requests manual tracks only. Do not infer the sung
+    # language from the artist's nationality or prefer Japanese translations.
+    candidates = [path for path in candidates if not re.search(
+        r"(?:^|[._-])(?:auto|asr|live_chat)(?:[._-]|$)", path.name, re.I)]
+    language = _source_language(source_dir)
+    if language:
+        exact = [path for path in candidates if _track_language(path) == language]
+        matching = exact or [path for path in candidates
+                             if _track_language(path).split("-")[0] == language.split("-")[0]]
+        if len(matching) == 1:
+            return matching[0]
+    if len(candidates) == 1:
         return candidates[0]
     if candidates:
-        raise ValueError("发现字幕文件但无法唯一确认官方日文轨，请用--subtitle明确指定")
+        raise ValueError("发现多份官方字幕，需按实际演唱语言用--subtitle指定，或在source/language.txt填写语言代码："
+                         + "、".join(path.name for path in candidates))
     return None
 
 
@@ -193,7 +210,7 @@ def _resolve_subtitle(mv_dir: Path, subtitle: Path | None) -> Path:
     if subtitle is None:
         discovered = discover_official_subtitle(mv_dir)
         if discovered is None:
-            raise FileNotFoundError("没有发现官方日文字幕")
+            raise FileNotFoundError("没有发现官方人工字幕")
         return discovered
     resolved = subtitle.resolve()
     if not resolved.is_file() or resolved.suffix.casefold() not in SUBTITLE_SUFFIXES:
@@ -573,7 +590,7 @@ def prepare_netease_reference(mv_dir: Path, candidate: Candidate) -> Path:
                 f"- 相对时段偏移提示　{timing_review}",
                 "- 网易云中文独立表　netease-chinese.tsv",
                 "",
-                "中文按日文正文相似度、重复顺序与整段相对位置匹配，再继承官方字幕的初始时间轴",
+                "中文按原文正文相似度、重复顺序与整段相对位置匹配，再继承官方字幕的初始时间轴",
                 "网易云时间只用于相对时段比较，不直接覆盖现场版时间",
                 "relative-earlier与relative-later只表示录音室版和现场版的相对位置有偏移，不等于实际早起或晚起",
                 "真正的早晚入点必须通过实际演唱或独立音频对齐确认，不自动改时间",
@@ -601,8 +618,8 @@ def write_review_sheet(mv_dir: Path) -> Path:
         "# 整首字幕审阅", "",
         "从头到尾审阅一次，重点修错译、漏译、跨行语义和重复句不一致；正确的现成中文不为更换文风而重写",
         "匹配高置信只表示正文对应，不等于翻译正确；相对时间提示不是实际演唱早晚的判定",
-        "只需把修改行写成line、japanese、chinese三列TSV，再用official-subtitle-review --edits一次合并校验；日文须原样填写以绑定行号", "",
-        "|行|初始/审定时间|日文|当前中文|重点|", "|---:|---|---|---|---|",
+        "只需把修改行写成line、japanese、chinese三列TSV，再用official-subtitle-review --edits一次合并校验；原文须原样填写以绑定行号", "",
+        "|行|初始/审定时间|原文|当前中文|重点|", "|---:|---|---|---|---|",
     ]
     def cell(value: str) -> str:
         return value.replace("|", r"\|").replace("\n", "<br>")
@@ -653,8 +670,6 @@ def prepare_official_subtitle(mv_dir: Path, subtitle: Path | None = None) -> Pat
     mv_dir = ensure_workspace(mv_dir)
     source = _resolve_subtitle(mv_dir, subtitle)
     cues = load_official_cues(source)
-    if not _contains_japanese(cues):
-        raise ValueError("指定字幕未检测到日文正文")
     review_dir = mv_dir / "review" / "official-subtitle"
     rows = [
         {
@@ -672,6 +687,7 @@ def prepare_official_subtitle(mv_dir: Path, subtitle: Path | None = None) -> Pat
     _write_rows(source_rows, rows)
     _write_rows(translation, rows)
     _write_chinese_rows(chinese, rows)
+    (review_dir / "selection-required.md").unlink(missing_ok=True)
     write_text(
         review_dir / "audit.md",
         "\n".join(
@@ -680,12 +696,12 @@ def prepare_official_subtitle(mv_dir: Path, subtitle: Path | None = None) -> Pat
                 "",
                 f"- 来源文件　{source.name}",
                 f"- 官方事件　{len(cues)}",
-                "- 正文基准　官方日文字幕",
+                "- 正文基准　官方原文字幕",
                 "- 初始时间轴　官方字幕逐事件起止时间",
-                "- 中文参考　仍需查询网易云日中歌词并按正文、条数和相对时段匹配",
+                "- 中文参考　仍需查询网易云原文与中文歌词并按正文、条数和相对时段匹配",
                 "- 中文规则　优先采用高置信网易云中文，缺失或不匹配时再补模型翻译",
                 "- 时间规则　明显早起或晚起必须在translation.tsv修正并保留差异审计",
-                "- 冻结基准　source-cues.tsv中的行号、日文正文和原始时间不得手工修改",
+                "- 冻结基准　source-cues.tsv中的行号、原文正文和原始时间不得手工修改",
                 "- 机器对齐　跳过SOFA、Whisper和Combined主流程",
                 "",
             ]
@@ -738,7 +754,7 @@ def apply_official_translations(
         zip(source_rows, current_rows, strict=True), start=1
     ):
         if any(source[field] != current[field] for field in ("line", "japanese")):
-            raise ValueError(f"第{index}条修改了冻结的行号或日文正文")
+            raise ValueError(f"第{index}条修改了冻结的行号或原文正文")
     input_path = translations.resolve() if translations else review_dir / "chinese.tsv"
     if not input_path.is_file():
         raise FileNotFoundError(f"缺少中文翻译输入：{input_path}")
@@ -762,7 +778,7 @@ def apply_official_translations(
             if line in seen or line not in by_line:
                 raise ValueError(f"修改行号重复或不存在：{line}")
             if edit["japanese"] != by_line[line]["japanese"]:
-                raise ValueError(f"第{line}条修改行与官方日文不一致")
+                raise ValueError(f"第{line}条修改行与官方原文不一致")
             if not edit["chinese"].strip():
                 raise ValueError(f"第{line}条修改行缺少中文")
             seen.add(line)
@@ -827,7 +843,7 @@ def build_official_candidate(mv_dir: Path) -> Path:
     ):
         protected = ("line", "japanese")
         if any(source[field] != translated[field] for field in protected):
-            raise ValueError(f"第{index}条修改了冻结的行号或日文正文")
+            raise ValueError(f"第{index}条修改了冻结的行号或原文正文")
         try:
             start_ms = int(translated["start_ms"])
             end_ms = int(translated["end_ms"])
@@ -861,7 +877,7 @@ def build_official_candidate(mv_dir: Path) -> Path:
                 "# 官方字幕候选检查",
                 "",
                 f"- 事件数　{len(cues)}",
-                "- 日文正文与官方字幕一致　通过",
+                "- 原文正文与官方字幕一致　通过",
                 f"- 相对官方字幕的时间修订　{timing_changes}条",
                 "- 修订时间合法且零重叠　通过",
                 "- 中文逐条齐全　通过",
@@ -873,7 +889,9 @@ def build_official_candidate(mv_dir: Path) -> Path:
     )
     if any(
         path.is_file() and path.suffix.casefold() in MEDIA_SUFFIXES
-        for path in (mv_dir / "source").iterdir()
+        for directory in (mv_dir / "source", mv_dir / "review" / "preview")
+        if directory.is_dir()
+        for path in directory.iterdir()
     ):
         from song_candidate import _prepare_candidate_preview
 
@@ -897,7 +915,7 @@ def validate_official_candidate(mv_dir: Path, candidate: Path) -> None:
         start=1,
     ):
         if any(source[field] != translated[field] for field in ("line", "japanese")):
-            raise ValueError(f"第{index}条修改了冻结的行号或日文正文")
+            raise ValueError(f"第{index}条修改了冻结的行号或原文正文")
         start_ms = int(translated["start_ms"])
         end_ms = int(translated["end_ms"])
         if start_ms < 0 or end_ms <= start_ms or start_ms < previous_end:
@@ -920,7 +938,7 @@ def validate_official_candidate(mv_dir: Path, candidate: Path) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="官方日文字幕优先与中文逐事件对齐")
+    parser = argparse.ArgumentParser(description="官方原文字幕优先与中文逐事件对齐")
     subparsers = parser.add_subparsers(dest="action", required=True)
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--mv-dir", required=True, type=Path)

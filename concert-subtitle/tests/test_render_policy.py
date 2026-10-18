@@ -95,7 +95,8 @@ class RenderPolicyTests(unittest.TestCase):
     def test_no_output_file_is_not_a_completed_render(self):
         from render_policy import verify_encoded_media
         with tempfile.TemporaryDirectory() as temporary, self.assertRaises(ValueError):
-            verify_encoded_media(Path("ffmpeg"), Path(temporary) / "missing.mp4")
+            verify_encoded_media(Path("ffmpeg"), Path(temporary) / "missing.mp4",
+                                 source=Path(temporary) / "source.mp4")
 
     def test_encoding_failure_propagates(self):
         # Probe failures are return codes; failures launching FFmpeg are not treated as no GPU

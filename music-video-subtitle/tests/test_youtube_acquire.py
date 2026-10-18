@@ -106,6 +106,8 @@ class YouTubeAcquireTests(unittest.TestCase):
                 )
 
             self.assertTrue(result.media.is_file())
+            self.assertEqual(mv_dir / "review/preview/source.mkv", result.media)
+            self.assertFalse((mv_dir / "source/source.mkv").exists())
             self.assertTrue((mv_dir / "source" / "source.ja.vtt").is_file())
             self.assertFalse((mv_dir / "work" / "youtube-acquire").exists())
             self.assertEqual(
@@ -118,6 +120,7 @@ class YouTubeAcquireTests(unittest.TestCase):
             self.assertIn("--stall-timeout", captured)
             self.assertIn("--write-thumbnail", captured)
             self.assertIn("--write-subs", captured)
+            self.assertEqual("all,-live_chat", captured[captured.index("--sub-langs") + 1])
             self.assertNotIn("--cookies-from-browser", captured)
             evidence = json.loads(result.evidence.read_text(encoding="utf-8"))
             self.assertEqual("ytdlp-global-auto", evidence["selected_strategy"])

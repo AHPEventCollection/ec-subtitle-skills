@@ -556,11 +556,12 @@ def render_final_video(
             )
             if code:
                 raise subprocess.CalledProcessError(code, command)
-        media = verify_encoded_media(ffmpeg, destination)
+        media = verify_encoded_media(ffmpeg, destination, source=source)
         ensure_current()
         receipt.update(status="completed", output_sha256=file_sha256(destination),
                        output_size=destination.stat().st_size,
-                       duration_seconds=float(media["format"]["duration"]))
+                       duration_seconds=float(media["format"]["duration"]),
+                       verification=media["verification"])
         write_json(receipt_path, receipt)
     except Exception as error:
         receipt.update(status="failed", error=str(error))

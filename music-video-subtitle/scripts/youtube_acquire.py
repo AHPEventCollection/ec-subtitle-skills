@@ -85,7 +85,7 @@ def _tail(value: str, limit: int = 4000) -> str:
 
 def _subtitle_error(output: str) -> str | None:
     missing_requested_subtitle = re.search(
-        r"File \".*\.(?:ja|zh-Hans|zh-Hant)\.(?:vtt|srt|ttml|srv[123]|json3)\" cannot be found",
+        r"File \".*\.(?:vtt|srt|ttml|srv[123]|json3)\" cannot be found",
         output,
         re.IGNORECASE,
     )
@@ -193,11 +193,7 @@ def _compatible_audio(
 
     # Preserve the selected highest-resolution video. The global MP4 preset is
     # used only to obtain official copy-compatible audio, never as the picture.
-    original = mv_dir / "work" / "youtube-original" / media.name
-    original.parent.mkdir(parents=True, exist_ok=True)
-    if original.exists():
-        raise FileExistsError(f"原始片源保留位置已存在，拒绝覆盖：{original}")
-    shutil.copy2(media, original)
+    original = media
     audio_dir = media.parent / "compatible-audio"
     audio_dir.mkdir()
     supplement = _without_subtitle_download(command)
@@ -250,11 +246,14 @@ def acquire_source(
 ) -> AcquisitionResult:
     mv_dir = ensure_workspace(mv_dir)
     source_dir = mv_dir / "source"
+    preview_dir = mv_dir / "review" / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
     if any(
         path.is_file() and path.suffix.casefold() in MEDIA_SUFFIXES
-        for path in source_dir.iterdir()
+        for directory in (source_dir, preview_dir)
+        for path in directory.iterdir()
     ):
-        raise FileExistsError("source目录已有视频，拒绝重复下载")
+        raise FileExistsError("工作区已有片源，拒绝重复下载")
 
     state = doctor_state(
         "youtube-download",
@@ -278,7 +277,7 @@ def acquire_source(
     staging = mv_dir / "work" / "youtube-acquire"
     evidence = mv_dir / "review" / "source-acquisition.json"
     if staging.exists():
-        shutil.rmtree(staging)
+        raise FileExistsError(f"存在上次未完成的下载，请先核对暂存片源：{staging}")
     staging.mkdir(parents=True)
     downloader_command = _global_downloader_command()
     base_command = [
@@ -301,7 +300,7 @@ def acquire_source(
         "--write-thumbnail",
         "--write-subs",
         "--sub-langs",
-        "ja,zh-Hans,zh-Hant",
+        "all,-live_chat",
     ]
     child_env = os.environ.copy()
     child_env["PYTHONIOENCODING"] = "utf-8"
@@ -319,6 +318,7 @@ def acquire_source(
         "selected_strategy": None,
     }
 
+    success = False
     try:
         for strategy, strategy_args in [("ytdlp-global-auto", [])]:
             started = time.monotonic()
@@ -404,7 +404,7 @@ def acquire_source(
             for item in staging.iterdir():
                 if not item.is_file():
                     continue
-                destination = source_dir / item.name
+                destination = (preview_dir if item.resolve() == staged_media else source_dir) / item.name
                 if destination.exists():
                     raise FileExistsError(
                         f"source目录存在同名文件，拒绝覆盖：{destination}"
@@ -413,7 +413,7 @@ def acquire_source(
                 moved[item.resolve()] = destination.resolve()
             media = moved.get(staged_media)
             if not media or not media.is_file():
-                raise RuntimeError("暂存片源没有成功移入source目录")
+                raise RuntimeError("暂存片源没有成功移入预览目录")
             facts["file"] = str(media)
             if subtitle_error:
                 facts["subtitle_status"] = "download-failed"
@@ -425,9 +425,13 @@ def acquire_source(
             audit["selected_strategy"] = selected_strategy
             audit["authentication"] = global_payload.get("authentication")
             audit["media"] = str(media)
+            if audit.get("audio_compatibility", {}).get("action") == "official-audio-remux":
+                audit["audio_compatibility"].pop("original", None)
+                audit["audio_compatibility"]["media"] = str(media)
             _write_evidence(evidence, audit)
+            success = True
             return AcquisitionResult(media, facts, ffprobe, selected_strategy, evidence)
         raise RuntimeError("ytdlp-global没有可用下载策略")
     finally:
-        if staging.exists():
+        if staging.exists() and (success or not any(staging.iterdir())):
             shutil.rmtree(staging)

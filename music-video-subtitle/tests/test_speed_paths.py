@@ -38,8 +38,8 @@ class SpeedPathsTests(unittest.TestCase):
                 "mv_pipeline.resolve_binary", return_value=Path("ffmpeg")):
                 candidate = prepare_official_review(mv, translation_model="Test Model")
             self.assertEqual(b"human-edited", master.read_bytes())
-            self.assertEqual(candidate.read_bytes(), (mv / "review/candidate-preview/source.srt").read_bytes())
-            self.assertEqual(b"original-video", (mv / "review/candidate-preview/source.mkv").read_bytes())
+            self.assertEqual(candidate.read_bytes(), (mv / "review/preview/source.srt").read_bytes())
+            self.assertEqual(b"original-video", (mv / "review/preview/source.mkv").read_bytes())
             self.assertTrue((mv / "review/source-visual-audit/contact-sheet.jpg").is_file())
             self.assertFalse(list((mv / "output").glob("*.ass")))
 
@@ -83,7 +83,7 @@ class SpeedPathsTests(unittest.TestCase):
                 else:
                     _compatible_audio(*inputs)
                     self.assertEqual(b"original-vp9-official-aac", media.read_bytes())
-            self.assertEqual(b"original-vp9-opus", (mv / "work/youtube-original/source.mkv").read_bytes())
+            self.assertFalse((mv / "work/youtube-original").exists())
 
     def test_opus_keeps_original_picture_and_copies_official_audio(self):
         self._audio_case()

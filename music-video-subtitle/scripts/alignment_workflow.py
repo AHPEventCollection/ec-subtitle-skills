@@ -15,7 +15,7 @@ from common import (
     resolve_binary,
     write_text,
 )
-from lyrics_source import is_metadata, parse_lrc
+from lyrics_source import lyric_text
 from subtitle_io import Cue, load_cues, render_srt, validate_cues
 
 
@@ -195,11 +195,7 @@ def _sha256(path: Path) -> str:
 
 
 def _lyric_text(path: Path) -> list[str]:
-    return [
-        line.text.strip()
-        for line in parse_lrc(path.read_text(encoding="utf-8-sig"))
-        if line.text.strip() and not is_metadata(line.text)
-    ]
+    return lyric_text(path.read_text(encoding="utf-8-sig"))
 
 
 def _roles(path: Path, count: int) -> list[str]:
@@ -424,7 +420,8 @@ def prepare_alignment(mv_dir: Path) -> Path:
         writer.writeheader()
         writer.writerows(applied)
 
-    master = mv_dir / "subtitle" / "master.srt"
+    master = next((mv_dir / "subtitle" / name for name in ("master.ass", "master.srt", "master.ssa")
+                   if (mv_dir / "subtitle" / name).is_file()), mv_dir / "subtitle" / "master.ass")
     guard_value = _sha256(master) if master.is_file() else "ABSENT"
     write_text(review_dir / "master-guard.sha256", guard_value + "\n")
     fields = set(rows[0])
@@ -441,7 +438,7 @@ def prepare_alignment(mv_dir: Path) -> Path:
         f"- 输出字段　{','.join(rows[0])}",
         f"- forbidden_fields_absent　{str(forbidden_absent).lower()}",
         "- 候选目录　review/alignment/candidates",
-        "- 人工主字幕　subtitle/master.srt只读保护",
+        "- 人工主字幕　审定ASS只读保护，兼容旧项目SRT",
         "",
     ]
     audit_path = review_dir / "input-audit.md"
@@ -682,10 +679,11 @@ def validate_alignment_candidates(mv_dir: Path, mode: str = "sofa") -> Path:
     if not guard.is_file():
         raise FileNotFoundError("缺少人工主字幕保护基线")
     expected_guard = guard.read_text(encoding="utf-8-sig").strip()
-    master = mv_dir / "subtitle" / "master.srt"
+    master = next((mv_dir / "subtitle" / name for name in ("master.ass", "master.srt", "master.ssa")
+                   if (mv_dir / "subtitle" / name).is_file()), mv_dir / "subtitle" / "master.ass")
     if expected_guard != "ABSENT":
         if not master.is_file() or _sha256(master) != expected_guard:
-            raise ValueError("subtitle/master.srt在机器候选阶段发生变化，拒绝继续")
+            raise ValueError("审定字幕在机器候选阶段发生变化，拒绝继续")
 
     lines = [
         "# 机器候选结构检查",

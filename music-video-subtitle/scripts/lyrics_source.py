@@ -17,11 +17,19 @@ USER_AGENT = f"music-video-subtitle/{VERSION}"
 LRC_LINE = re.compile(
     r"\[(?P<minute>\d{2,3}):(?P<second>\d{2}(?:\.\d{1,3})?)\](?P<text>.*)"
 )
+DASH_VARIANTS = re.compile(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uff0d]")
+TRACK_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.．、]\s*(?=[^\d\s])")
 METADATA = re.compile(
     r"^(作词|作曲|编曲|制作人|翻译|混音(?:工程师|师)?|母带(?:工程师|处理)?|录音(?:工程师|师)?|出品|发行|吉他|贝斯|鼓|"
     r"詞|曲|編曲|プロデューサー|Lyrics|Composer|Arranger|Producer|Vocal)\b",
     re.IGNORECASE,
 )
+SECTION_LABEL = re.compile(
+    r"^(?:【|\[)(?:\d*[A-C](?:メロ)?|\d*サビ|落ちサビ|大サビ|ラスサビ|"
+    r"(?:verse|chorus|bridge|intro|outro|interlude)(?:\s*\d+)?)(?:】|\])$",
+    re.IGNORECASE,
+)
+LRC_METADATA = re.compile(r"^\[(?:ar|ti|al|by|offset|length|re|ve):.*\]$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -40,6 +48,8 @@ class Candidate:
     translated_lines: int
     coverage: float
     missing_timestamps: tuple[int, ...]
+    title_hit: bool = True
+    title_exact: bool = True
 
 
 def parse_lrc(value: str | None) -> list[TimedLine]:
@@ -58,12 +68,46 @@ def parse_lrc(value: str | None) -> list[TimedLine]:
 
 
 def is_metadata(text: str) -> bool:
-    return bool(METADATA.match(text.strip()))
+    text = text.strip()
+    return bool(METADATA.match(text) or SECTION_LABEL.fullmatch(text) or LRC_METADATA.fullmatch(text))
+
+
+def lyric_text(value: str | None) -> list[str]:
+    """Read lyric text with or without timestamps; never invent timing."""
+    lines: list[str] = []
+    for raw_line in (value or "").splitlines():
+        text = raw_line.strip().lstrip("\ufeff")
+        match = LRC_LINE.match(text)
+        if match:
+            text = match.group("text").strip()
+        if text and not is_metadata(text):
+            lines.append(text)
+    return lines
+
+
+def has_complete_timing(value: str | None) -> bool:
+    texts = lyric_text(value)
+    return bool(texts) and len(lyric_lines(value)) == len(texts)
+
+
+def lyric_response_status(value: str | None) -> str:
+    if not (value or "").strip():
+        return "本次接口未返回原文"
+    if not lyric_text(value):
+        return "接口有内容但未识别正文，需核对原始字段"
+    if has_complete_timing(value):
+        return "正文有完整时间标签"
+    return "正文含无时间标签行，待对齐"
 
 
 def is_ascii_chant(text: str) -> bool:
-    stripped = re.sub(r"[\s♪♫~～!！?？.,，。'\"()（）]", "", text)
-    return bool(stripped) and stripped.isascii() and len(stripped) <= 16
+    # Short English lyrics are still lyrics, not automatically untranslated chants.
+    tokens = re.findall(r"[a-z]+", text.casefold())
+    remainder = re.sub(r"[a-z\s♪♫~～!！?？.,，。'\"()（）-]", "", text.casefold())
+    return not remainder and bool(tokens) and all(
+        re.fullmatch(r"(?:o+h+|a+h+|ooh+|wo[oa]+h?|ye[as]+h?|hey|la+|na+|ha+|hm+|mm+)", token)
+        for token in tokens
+    )
 
 
 def lyric_lines(value: str | None) -> list[TimedLine]:
@@ -85,6 +129,12 @@ def translation_coverage(
 ) -> tuple[float, tuple[int, ...], int, int]:
     originals = lyric_lines(original)
     translations = lyric_lines(translation)
+    original_count = len(lyric_text(original))
+    translated_count = len(lyric_text(translation))
+    if not has_complete_timing(original):
+        return 0.0, (), original_count, translated_count
+    if translated_count and not has_complete_timing(translation):
+        return 0.0, (), original_count, translated_count
     translated_timestamps = {line.timestamp for line in translations}
     missing = [
         line.timestamp
@@ -95,7 +145,7 @@ def translation_coverage(
     required = len([line for line in originals if not is_ascii_chant(line.text)])
     covered = required - len(missing)
     coverage = covered / required if required else 0.0
-    return coverage, tuple(missing), len(originals), len(translations)
+    return coverage, tuple(missing), original_count, translated_count
 
 
 def _normalize_cookie(raw: str | None) -> str | None:
@@ -154,6 +204,14 @@ def artists_text(song: dict[str, Any]) -> str:
     return "|".join(item.get("name", "") for item in artists if isinstance(item, dict))
 
 
+def _title_hit(title: str, song: dict[str, Any]) -> bool:
+    query_title = title.casefold().strip()
+    hit_title = str(song.get("name", "")).casefold().strip()
+    if not query_title or not hit_title:
+        return False
+    return query_title == hit_title or query_title in hit_title or hit_title in query_title
+
+
 def _match_score(title: str, artist: str, song: dict[str, Any]) -> int:
     query_title = title.casefold().strip()
     query_artist = artist.casefold().strip()
@@ -187,8 +245,12 @@ def inspect_candidates(
         if song.get("id") is None:
             continue
         data = netease_lyrics(int(song["id"]), cookie)
+        if data.get("code", 200) != 200:
+            raise RuntimeError(f"网易云歌词接口失败（歌曲ID {song['id']}，code={data.get('code')}），不能判为无歌词")
         original = (data.get("lrc") or {}).get("lyric")
         translation = (data.get("tlyric") or {}).get("lyric")
+        if any(value is not None and not isinstance(value, str) for value in (original, translation)):
+            raise ValueError(f"网易云歌词字段格式异常（歌曲ID {song['id']}），不能判为无歌词")
         coverage, missing, originals, translations = translation_coverage(
             original, translation
         )
@@ -198,6 +260,8 @@ def inspect_candidates(
                 original=original,
                 translation=translation,
                 match_score=_match_score(title, artist, song),
+                title_hit=_title_hit(title, song),
+                title_exact=title.casefold().strip() == str(song.get("name", "")).casefold().strip(),
                 lyric_lines=originals,
                 translated_lines=translations,
                 coverage=coverage,
@@ -208,14 +272,21 @@ def inspect_candidates(
 
 
 def choose_candidate(candidates: list[Candidate]) -> Candidate | None:
-    valid = [candidate for candidate in candidates if candidate.lyric_lines > 0]
-    if not valid:
+    matching = [
+        candidate
+        for candidate in candidates
+        if candidate.title_hit and candidate.match_score >= 8
+    ]
+    if not matching:
         return None
-    best_match = max(candidate.match_score for candidate in valid)
+    exact = [candidate for candidate in matching if candidate.title_exact]
+    matching = exact or matching
+    # Establish identity before filtering for lyric availability or translation.
+    best_match = max(candidate.match_score for candidate in matching)
     plausible = [
         candidate
-        for candidate in valid
-        if candidate.match_score >= max(1, best_match - 2)
+        for candidate in matching
+        if candidate.match_score >= best_match - 2 and candidate.lyric_lines > 0
     ]
     if not plausible:
         return None
@@ -249,7 +320,7 @@ def write_fallback_search_plan(title: str, artist: str, out_dir: Path) -> Path:
                 "",
                 f"- 歌曲　{title}",
                 f"- 艺人　{artist}",
-                "- 触发原因　网易云前5个候选没有可用同步歌词",
+                "- 触发原因　网易云前5个候选没有歌曲匹配且可用的歌词正文",
                 "- 回退站点　UtaTen、TuneCore Japan",
                 "",
                 "## 搜索顺序",
@@ -285,17 +356,24 @@ def fetch_netease_bilingual(
     out_dir.mkdir(parents=True, exist_ok=True)
     report = out_dir / "lookup.md"
     rows = [
-        "|候选|艺人|匹配分|原文行|中文行|中文覆盖|",
-        "|---|---|---:|---:|---:|---:|",
+        "|候选|艺人|匹配分|原文行|中文行|中文覆盖|接口原文字符|带时间原文行|原文状态|",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for candidate in candidates:
         song_id = candidate.song.get("id")
         name = candidate.song.get("name", "")
+        coverage_text = (
+            f"{candidate.coverage:.1%}"
+            if has_complete_timing(candidate.original)
+            and (not candidate.translation or has_complete_timing(candidate.translation))
+            else "未核验"
+        )
         rows.append(
             f"|[{name}](https://music.163.com/song?id={song_id})|"
             f"{artists_text(candidate.song)}|{candidate.match_score}|"
             f"{candidate.lyric_lines}|{candidate.translated_lines}|"
-            f"{candidate.coverage:.1%}|"
+            f"{coverage_text}|{len(candidate.original or '')}|"
+            f"{len(lyric_lines(candidate.original))}|{lyric_response_status(candidate.original)}|"
         )
     if chosen is None:
         write_text(
@@ -306,7 +384,7 @@ def fetch_netease_bilingual(
                     "",
                     f"- 歌曲　{title}",
                     f"- 艺人　{artist}",
-                    "- 结果　没有找到可用同步歌词",
+                    "- 结果　没有找到歌曲匹配且可用的歌词正文",
                     "",
                     *rows,
                     "",
@@ -315,7 +393,7 @@ def fetch_netease_bilingual(
         )
         fallback = write_fallback_search_plan(title, artist, out_dir)
         raise LookupError(
-            f"网易云前5个候选没有可用同步歌词，按固定双站方案继续：{fallback}"
+            f"网易云前5个候选没有歌曲匹配且可用的歌词正文，按固定双站方案继续：{fallback}"
         )
     original = (chosen.original or "").strip()
     translation = (chosen.translation or "").strip()
@@ -323,6 +401,8 @@ def fetch_netease_bilingual(
     if translation:
         write_text(out_dir / "chinese.lrc", translation + "\n")
     missing = "、".join(_timestamp_text(value) for value in chosen.missing_timestamps)
+    timed = has_complete_timing(original)
+    coverage_verified = timed and (not translation or has_complete_timing(translation))
     chosen_id = chosen.song.get("id")
     write_text(
         report,
@@ -334,14 +414,16 @@ def fetch_netease_bilingual(
                 f"- 艺人　{artist}",
                 f"- 采用　[{chosen.song.get('name', '')}](https://music.163.com/song?id={chosen_id})",
                 f"- 网易云艺人　{artists_text(chosen.song)}",
-                f"- 中文覆盖　{chosen.coverage:.1%}",
-                f"- 缺译时间　{missing or '无'}",
+                f"- 原文格式　{'完整时间标签' if timed else '含无时间标签正文，待对齐'}",
+                f"- 中文覆盖　{format(chosen.coverage, '.1%') if coverage_verified else '未核验，不能按时间匹配'}",
+                f"- 中文正文　{'已获取，仍需核对' if translation else '接口未提供'}",
+                f"- 缺译时间　{(missing or '无') if coverage_verified else '不适用，尚无完整时间对应'}",
                 "",
                 "## 前5个候选",
                 "",
                 *rows,
                 "",
-                "网易云歌词提供正文与初始时间。正式采用前仍需对照MV实际演唱，确认改词、重复、语气词和尾句",
+                "网易云歌词原样保存，不为纯文本伪造时间。正式采用前仍需对照MV实际演唱，确认改词、重复、语气词和尾句",
                 "",
             ]
         ),
@@ -368,7 +450,7 @@ def fetch_for_workspace(
 
 
 def clean_workspace_title(title: str) -> str:
-    value = title.strip()
+    value = DASH_VARIANTS.sub("-", title.strip())
     quoted = re.fullmatch(
         r'.*?[「『](.+?)[」』]\s*(?:(?:Full\s*Ver\.?|Official(?:\s+Music)?\s*Video|Official\s*MV|Music\s*Video|MV)\s*)?',
         value, flags=re.IGNORECASE,
@@ -383,6 +465,7 @@ def clean_workspace_title(title: str) -> str:
         prefix, remainder = value.split(" / ", 1)
         if remainder and len(prefix) <= 40:
             value = remainder
+    value = TRACK_NUMBER.sub("", value, count=1)
     value = re.split(r"\s+-?\s*from\s+", value, maxsplit=1, flags=re.IGNORECASE)[0]
     value = re.sub(
         r"\s*[\[(（【].*?(official|music\s*video|mv|live).*?[\])）】].*$",

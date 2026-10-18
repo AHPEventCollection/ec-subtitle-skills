@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PLATFORMS = ("微博", "小红书", "B站", "视频号")
-FIELD = re.compile(r"^(标题|正文|话题|标签|转载链接|上一篇笔记ID)：(.*)$")
+FIELD = re.compile(r"^(标题|正文|话题|标签|原视频|转载链接|上一篇笔记ID|章节评论|发布备注)：(.*)$")
 URL = re.compile(r"https?://[^\s<>）]+")
 BV = re.compile(r"\bBV[0-9A-Za-z]{10}\b")
 
@@ -21,6 +21,8 @@ class Post:
     tags: str = ""
     source: str = ""
     previous_note_id: str = ""
+    chapter_comment: str = ""
+    publishing_notes: str = ""
 
 
 def parse_copy(text: str) -> dict[str, Post]:
@@ -34,7 +36,7 @@ def parse_copy(text: str) -> dict[str, Post]:
         for line in chunk.splitlines():
             match = FIELD.match(line)
             if match:
-                current = match[1]
+                current = "转载链接" if match[1] == "原视频" else match[1]
                 if current in fields and any(part.strip() for part in fields[current]):
                     raise ValueError(f"{platform}字段重复：{current}")
                 fields[current] = [match[2]]
@@ -50,6 +52,8 @@ def parse_copy(text: str) -> dict[str, Post]:
             tags=value.get("标签", value.get("话题", "")),
             source=value.get("转载链接", ""),
             previous_note_id=value.get("上一篇笔记ID", ""),
+            chapter_comment=value.get("章节评论", ""),
+            publishing_notes=value.get("发布备注", ""),
         )
     return posts
 
@@ -96,6 +100,45 @@ def check_posts(posts: dict[str, Post], platforms: list[str], require_previous: 
                 issues.append("小红书：缺少上一篇标题")
             if not re.fullmatch(r"[0-9a-f]{24}", post.previous_note_id):
                 issues.append("小红书：缺少已核验的上一篇笔记ID，不能冒充已完成站内引用")
+    return issues
+
+
+def check_chapter_comment(text: str) -> list[str]:
+    """Check the portable chapter text, not native platform chapter state."""
+    if not text.strip():
+        return ["缺少章节评论文字，至少准备开场和结束章节"]
+    chapters: list[tuple[int, str]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"\s*((?:\d{2,}:)?\d{2}:[0-5]\d)\s+(.+?)\s*", line)
+        if not match:
+            return ["章节评论须逐行使用MM:SS或HH:MM:SS与章节名称"]
+        parts = [int(part) for part in match[1].split(":")]
+        if len(parts) == 3 and parts[1] >= 60:
+            return ["章节评论的小时格式中分钟须小于60"]
+        seconds = parts[-2] * 60 + parts[-1]
+        if len(parts) == 3:
+            seconds += parts[0] * 3600
+        chapters.append((seconds, match[2]))
+    issues: list[str] = []
+    if not chapters or chapters[0] != (0, "开场"):
+        issues.append("章节评论须以00:00 开场开始")
+    if len(chapters) < 2 or chapters[-1][1] != "结束":
+        issues.append("章节评论须包含独立的结束章节")
+    if any(right[0] <= left[0] for left, right in zip(chapters, chapters[1:])):
+        issues.append("章节时间须严格递增，不得重复或倒序")
+    return issues
+
+
+def check_production_credit(body: str) -> list[str]:
+    issues = []
+    for label in ("使用模型", "Token用量", "制作耗时", "使用技能"):
+        match = re.search(rf"(?m)^{label}：([^\r\n]*)$", body)
+        if match is None or not match[1].strip():
+            issues.append(f"制作署名缺少{label}")
+        elif label == "使用技能" and "ec-subtitle-skills" not in match[1]:
+            issues.append("使用技能须注明ec-subtitle-skills")
     return issues
 
 
@@ -150,6 +193,7 @@ def preflight(mv_dir: Path, explicit: Path | None = None, require_previous: bool
         post = posts.get(platform)
         if post is None:
             continue
+        issues.extend(f"{platform}：{issue}" for issue in check_production_credit(post.body))
         lines += [f"## {platform}", "", f"标题：{post.title}",
                   f"正文：{len(post.body)}字，保留人工格式", f"标签：{html.unescape(post.tags) or '沿用正文内话题'}"]
         if platform == "B站":
@@ -160,6 +204,14 @@ def preflight(mv_dir: Path, explicit: Path | None = None, require_previous: bool
             lines.append(f"专用转载来源：{source or '尚缺少，不能放进正文代替'}")
         if platform == "小红书" and post.previous_note_id:
             lines.append(f"上一篇笔记ID：{post.previous_note_id}，仍须在页面核验站内引用卡片")
+        if platform in {"微博", "B站", "小红书"}:
+            issues.extend(f"{platform}：{issue}" for issue in check_chapter_comment(post.chapter_comment))
+            lines.append("章节提醒：发布时可以编辑视频章节，至少核对开场和结束；按项目流程保存后重新打开核验")
+            lines.append("章节评论文字独立于正文和标签，文案就绪不代表平台章节已保存或评论已发送")
+            if post.chapter_comment:
+                lines += ["章节评论：", post.chapter_comment]
+        if post.publishing_notes:
+            lines += ["发布备注，不粘入正文：", post.publishing_notes]
         lines.append("")
     lines += ["## 检查结论", ""]
     lines += [f"- {issue}" for issue in issues] or ["本地文案检查通过，不代表网页待提交已完成"]

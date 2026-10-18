@@ -210,14 +210,15 @@ def _prepare_candidate_preview(
     *,
     review_cues: list[Cue] | None = None,
 ) -> tuple[Path, Path, Path]:
-    preview_dir = mv_dir / "review" / "candidate-preview"
+    from common import preview_source
+
+    source = preview_source(mv_dir)
+    preview_dir = source.parent
     preview_dir.mkdir(parents=True, exist_ok=True)
     preview_video = preview_dir / source.name
     preview_subtitle = preview_dir / f"{source.stem}.srt"
-    if (not _fresh(preview_video, source)
-            or preview_video.stat().st_size != source.stat().st_size
-            or preview_video.stat().st_mtime_ns != source.stat().st_mtime_ns):
-        shutil.copy2(source, preview_video)
+    if (preview_dir / f"{source.stem}.ass").is_file():
+        preview_subtitle = preview_dir / f"{source.stem}.candidate.srt"
     # Different candidates can have older timestamps; switching back to the
     # representative must still replace the video-side SRT with that file.
     if preview_subtitle.resolve() != candidate.resolve():
@@ -255,9 +256,9 @@ def _prepare_candidate_preview(
                 f"- 完整片源　{preview_video}",
                 f"- 同名外挂字幕　{preview_subtitle}",
                 f"- 候选来源　{candidate}",
-                "- 视频处理　原样复制，不重新编码，不封装字幕轨",
+                "- 视频处理　复用预览目录中的唯一片源，不复制、不重新编码、不封装字幕轨",
                 "- 人工主字幕　未修改",
-                "- 使用方式　打开本目录中的视频，播放器按同名文件自动加载SRT",
+                "- 使用方式　打开本目录中的视频，播放器按同名文件自动加载SRT；已有正式ASS时须手动选择上述候选字幕",
                 "",
                 "## 复对检查点",
                 "",
@@ -309,7 +310,7 @@ def _sample_source_frames(mv_dir: Path, source: Path, ffmpeg: str) -> Path:
                 "- 代表帧上限　12",
                 f"- 实际代表帧　{len(sampled)}",
                 "- 候选生成　不因本项暂停",
-                "- 后续规则　代表帧疑似连续歌词卡时，在确认master.srt前补做逐句画面对照",
+                "- 后续规则　代表帧疑似连续歌词卡时，在确认master.ass前补做逐句画面对照",
                 "",
             ]
         ),
@@ -319,6 +320,10 @@ def _sample_source_frames(mv_dir: Path, source: Path, ffmpeg: str) -> Path:
 
 def build_song_candidate(mv_dir: Path, runtime_root: str | None = None) -> Path:
     mv_dir = ensure_workspace(mv_dir)
+    from official_subtitle import discover_official_subtitle
+
+    if discover_official_subtitle(mv_dir) is not None:
+        raise ValueError("已发现官方人工字幕，请先使用official-subtitle-prepare，不按缺少日文轨启动SOFA")
     state = doctor_state(
         "song",
         runtime_root=runtime_root,
@@ -363,7 +368,7 @@ def build_song_candidate(mv_dir: Path, runtime_root: str | None = None) -> Path:
                 f"- 候选复对片源　{preview_video}",
                 f"- 候选复对字幕　{preview_subtitle}",
                 f"- 候选复对说明　{candidate_preview}",
-                "- 正式ASS预览　候选确认并提升为master.srt后再生成",
+                "- 正式ASS预览　候选确认并提升为master.ass后再生成",
                 "- 人工主字幕　未修改",
                 f"- 结构校准入口　{structure_instructions}",
                 "- 下一步　主线程识别完整一番/二番，校准代表段并生成结构推广候选，再进行整曲人工复对",

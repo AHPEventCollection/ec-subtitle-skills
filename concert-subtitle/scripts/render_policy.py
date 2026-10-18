@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
 import subprocess
 from pathlib import Path
@@ -132,18 +133,75 @@ def default_destination(concert_dir: Path, source: Path, concert_id: str,
     return destination
 
 
-def verify_encoded_media(ffmpeg: Path, output: Path) -> dict[str, Any]:
+def verify_encoded_media(ffmpeg: Path, output: Path, *, source: Path) -> dict[str, Any]:
     if not output.is_file() or output.stat().st_size == 0:
         raise ValueError("编码未生成有效输出文件")
+    if not source.is_file() or source.stat().st_size == 0:
+        raise ValueError("缺少用于核对成片的有效源视频")
     ffprobe = ffmpeg.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
-    result = subprocess.run([str(ffprobe), "-v", "error", "-show_streams", "-show_format",
-                             "-of", "json", str(output)], check=True, capture_output=True, text=True)
-    media = json.loads(result.stdout)
-    if not any(row.get("codec_type") == "video" and row.get("codec_name") == "h264"
-               for row in media.get("streams", [])):
+
+    def probe(path: Path) -> dict[str, Any]:
+        result = subprocess.run(
+            [str(ffprobe), "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+            check=True, capture_output=True, text=True,
+        )
+        return json.loads(result.stdout)
+
+    def duration(value: Any, label: str) -> float:
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{label}时长非法") from error
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{label}时长非法")
+        return seconds
+
+    original = probe(source)
+    media = probe(output)
+    original_duration = duration(original.get("format", {}).get("duration"), "源视频")
+    output_duration = duration(media.get("format", {}).get("duration"), "输出视频")
+    streams = {kind: next((row for row in media.get("streams", [])
+                           if row.get("codec_type") == kind), None) for kind in ("video", "audio")}
+    if not streams["video"] or streams["video"].get("codec_name") != "h264":
         raise ValueError("输出缺少H.264视频流")
-    if float(media.get("format", {}).get("duration", 0)) <= 0:
-        raise ValueError("输出视频时长非法")
-    subprocess.run([str(ffmpeg), "-nostdin", "-v", "error", "-i", str(output),
-                    "-t", "1", "-f", "null", "-"], check=True)
+    if not streams["audio"]:
+        raise ValueError("输出缺少音轨")
+    tolerance = 0.25
+    if abs(output_duration - original_duration) > tolerance:
+        raise ValueError("成片时长与源视频差异超过0.25秒")
+    stream_durations: dict[str, dict[str, float]] = {}
+    for kind in ("video", "audio"):
+        expected = next((row for row in original.get("streams", [])
+                         if row.get("codec_type") == kind), None)
+        if not expected:
+            raise ValueError(f"源视频缺少{kind}流，无法核对成片")
+        actual = streams[kind]
+        if kind == "video":
+            dimensions = (expected.get("width"), expected.get("height"))
+            if not all(isinstance(value, int) and value > 0 for value in dimensions):
+                raise ValueError("源视频尺寸非法")
+            if (actual.get("width"), actual.get("height")) != dimensions:
+                raise ValueError("成片画面尺寸与源视频不一致")
+        expected_time = expected.get("duration")
+        actual_time = actual.get("duration")
+        expected_seconds = (original_duration if expected_time in (None, "N/A")
+                            else duration(expected_time, f"源{kind}流"))
+        actual_seconds = (output_duration if actual_time in (None, "N/A")
+                          else duration(actual_time, f"输出{kind}流"))
+        if abs(actual_seconds - expected_seconds) > tolerance:
+            raise ValueError(f"成片{kind}流时长与源视频差异超过0.25秒")
+        stream_durations[kind] = {"source": expected_seconds, "output": actual_seconds}
+    decoded = subprocess.run(
+        [str(ffmpeg), "-nostdin", "-v", "error", "-xerror", "-err_detect", "explode",
+         "-i", str(output), "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    if decoded.returncode or decoded.stderr.strip():
+        raise ValueError("成片完整音视频解码失败：" + decoded.stderr.strip())
+    media["verification"] = {
+        "full_decode": "passed", "source_duration_seconds": original_duration,
+        "duration_tolerance_seconds": tolerance, "stream_durations": stream_durations,
+        "width": streams["video"]["width"], "height": streams["video"]["height"],
+        "audio_codec": streams["audio"].get("codec_name"),
+    }
     return media

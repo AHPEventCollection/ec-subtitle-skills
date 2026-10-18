@@ -187,7 +187,7 @@ class OfficialSubtitleTests(unittest.TestCase):
 
             with (
                 patch.object(common, "project_root", return_value=root),
-                self.assertRaisesRegex(ValueError, "冻结的行号或日文正文"),
+                self.assertRaisesRegex(ValueError, "冻结的行号或原文正文"),
             ):
                 build_official_candidate(mv_dir)
 

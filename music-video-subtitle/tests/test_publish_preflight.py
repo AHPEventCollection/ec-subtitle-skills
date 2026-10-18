@@ -6,10 +6,87 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from publish_preflight import Post, check_posts, check_title_preference, parse_copy, preflight, resolve_copy  # noqa: E402
+from publish_preflight import Post, check_chapter_comment, check_posts, check_production_credit, check_title_preference, parse_copy, preflight, resolve_copy  # noqa: E402
 
 
 class PublishPreflightTests(unittest.TestCase):
+    def test_chapters_and_notes_never_leak_into_platform_body_or_tags(self):
+        chapters = "00:00 开场\n01:20 演唱\n03:45 结束"
+        body = ("人工正文\n中文歌词来源：网易云音乐\n使用模型：测试模型（校对）"
+                "\nToken用量：未取得（运行环境未提供）\n制作耗时：4分钟（机器处理）"
+                "\n使用技能：ec-subtitle-skills")
+        for platform in ("微博", "小红书", "B站"):
+            with self.subTest(platform=platform):
+                post = parse_copy(f"## {platform}\n标题：标题\n\n{body}\n\n标签：音乐"
+                                  f"\n\n章节评论：\n{chapters}\n\n发布备注：章节尚未保存\n")[platform]
+                self.assertEqual(post.body, body)
+                self.assertEqual(post.tags, "音乐")
+                self.assertEqual(post.chapter_comment, chapters)
+                self.assertEqual(post.publishing_notes, "章节尚未保存")
+                self.assertEqual(check_chapter_comment(chapters), [])
+                self.assertEqual(check_production_credit(post.body), [])
+
+    def test_credit_requires_fields_but_does_not_invent_unavailable_usage(self):
+        body = ("使用模型：测试模型（校对）\nToken用量：未取得（本任务未提供用量记录）"
+                "\n制作耗时：未取得（没有起止记录）\n使用技能：ec-subtitle-skills")
+        self.assertEqual(check_production_credit(body), [])
+        self.assertEqual(len(check_production_credit("正文")), 4)
+        self.assertTrue(check_production_credit(body.replace("ec-subtitle-skills", "另一个技能")))
+
+    def test_chapter_text_requires_opening_ending_and_ordered_times(self):
+        self.assertEqual(check_chapter_comment("00:00 开场\n01:02:03 结束"), [])
+        for text in ("", "00:01 开场\n01:00 结束", "00:00 开场", "00:00 开场\n00:00 结束",
+                     "00:00 开场\n02:00 歌曲\n01:00 结束", "00:00 开场\n01:60 结束",
+                     "00:00 开场\n01:60:00 结束", "00:00 开场\n待确认 结束"):
+            with self.subTest(text=text):
+                self.assertTrue(check_chapter_comment(text))
+
+    def test_preflight_reminds_each_platform_without_mutating_or_claiming_saved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "fixture"
+            (root / "output").mkdir(parents=True)
+            (root / "output/fixture.hardsub.v01.mp4").write_bytes(b"test video")
+            (root / "output/fixture.cover.v01.jpg").write_bytes(b"test cover")
+            copy = root / "output/fixture.publish-copy.v01.md"
+            credit = ("使用模型：测试模型\nToken用量：未取得（未提供）"
+                      "\n制作耗时：1分钟（机器处理）\n使用技能：ec-subtitle-skills")
+            text = "\n".join(f"## {platform}\n标题：标题\n\n正文\n{credit}\n\n章节评论：\n00:00 开场\n03:00 结束\n"
+                             for platform in ("微博", "小红书", "B站"))
+            copy.write_text(text, encoding="utf-8")
+            issues: list[str] = []
+            report = preflight(root, issues_out=issues)
+            self.assertEqual(issues, [])
+            self.assertEqual(report.count("章节提醒："), 3)
+            self.assertEqual(report.count("文案就绪不代表平台章节已保存或评论已发送"), 3)
+            self.assertEqual(copy.read_text(encoding="utf-8"), text)
+            copy.write_text(text.replace("03:00 结束", "03:00 歌曲"), encoding="utf-8")
+            issues.clear()
+            preflight(root, issues_out=issues)
+            self.assertEqual(len(issues), 3)
+
+    def test_mv_template_extracts_original_video_without_changing_body(self):
+        text = """## B站
+
+标题：【中日双语】hockrockb《名もない花》MV
+
+TV动画《ワールド イズ ダンシング》片尾曲，2026年7月15日发行
+中文歌词来源：网易云音乐
+
+原视频：https://www.youtube.com/watch?v=dLIGNw2J-Z8
+
+标签：hockrockb、乐队、MV、ワールド イズ ダンシング
+"""
+        post = parse_copy(text)["B站"]
+        self.assertEqual(post.title, "【中日双语】hockrockb《名もない花》MV")
+        self.assertEqual(post.source, "https://www.youtube.com/watch?v=dLIGNw2J-Z8")
+        self.assertEqual(post.body, "TV动画《ワールド イズ ダンシング》片尾曲，2026年7月15日发行\n中文歌词来源：网易云音乐")
+        self.assertEqual(post.tags, "hockrockb、乐队、MV、ワールド イズ ダンシング")
+        self.assertEqual(check_posts({"B站": post}, ["B站"], False), [])
+
+    def test_original_video_alias_rejects_duplicate_source(self):
+        with self.assertRaises(ValueError):
+            parse_copy("## B站\n标题：标题\n\n简介\n原视频：https://example.com/a\n转载链接：https://example.com/b")
+
     def test_formal_copy_wins_and_is_not_modified(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "fixture"

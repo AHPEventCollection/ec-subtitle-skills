@@ -61,6 +61,45 @@ class LyricsSourceTests(unittest.TestCase):
                 fetch.assert_called_once_with("霞日和", "コブクロ", mv / "lyrics", cookie_file=None)
             self.assertEqual(title, (mv / "source/title.txt").read_text(encoding="utf-8"))
 
+    def test_cleans_en_dash_artist_and_track_number_from_session_title(self) -> None:
+        self.assertEqual(
+            "Feeling",
+            clean_workspace_title(
+                "Mrs. GREEN APPLE – 05. Feeling from Studio Session Live #2"
+            ),
+        )
+        self.assertEqual(
+            "Feeling",
+            clean_workspace_title(
+                "Mrs. GREEN APPLE — 05.Feeling from Studio Session Live #2"
+            ),
+        )
+        self.assertEqual("8.8", clean_workspace_title("8.8"))
+        self.assertEqual("2.5次元", clean_workspace_title("2.5次元"))
+
+    def test_artist_only_candidate_is_not_adopted(self) -> None:
+        songs = [
+            {
+                "id": 3405885683,
+                "name": "Brand New",
+                "artists": [{"name": "Mrs. GREEN APPLE"}],
+                "popularity": 100,
+            }
+        ]
+        with (
+            patch("lyrics_source.netease_search", return_value=songs),
+            patch(
+                "lyrics_source.netease_lyrics",
+                return_value={
+                    "lrc": {"lyric": "[00:01.00]原文一\n[00:02.00]原文二"},
+                    "tlyric": {"lyric": "[00:01.00]译文一\n[00:02.00]译文二"},
+                },
+            ),
+        ):
+            candidates = inspect_candidates("Feeling", "Mrs. GREEN APPLE", None)
+
+        self.assertIsNone(choose_candidate(candidates))
+
     def test_coverage_ignores_metadata_and_ascii_chant(self) -> None:
         original = "\n".join(
             [

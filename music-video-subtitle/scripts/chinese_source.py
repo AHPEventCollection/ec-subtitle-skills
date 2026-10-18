@@ -7,6 +7,7 @@ from common import ensure_workspace, write_text
 
 SOURCE_FILE = "chinese-source.txt"
 NETEASE_CREDIT = "中文歌词来源：网易云音乐"
+OFFICIAL_CREDIT = "中文歌词来源：官方YouTube中文字幕"
 MODEL_PREFIX = "中文歌词来源：翻译模型（"
 HYBRID_PREFIX = "中文歌词来源：网易云音乐、翻译模型（"
 
@@ -17,7 +18,11 @@ def record_chinese_source(
     model: str | None = None,
 ) -> Path:
     mv_dir = ensure_workspace(mv_dir)
-    if kind == "netease":
+    if kind == "official":
+        if model:
+            raise ValueError("官方中文字幕来源不应填写翻译模型")
+        credit = OFFICIAL_CREDIT
+    elif kind == "netease":
         if model:
             raise ValueError("网易云音乐来源不应填写翻译模型")
         credit = NETEASE_CREDIT
@@ -32,7 +37,7 @@ def record_chinese_source(
             raise ValueError("混合来源必须填写该次实际使用的翻译模型名")
         credit = f"{HYBRID_PREFIX}{model_name}）"
     else:
-        raise ValueError("中文歌词来源只能是netease、translation-model或hybrid")
+        raise ValueError("中文歌词来源只能是official、netease、translation-model或hybrid")
     path = mv_dir / "subtitle" / SOURCE_FILE
     write_text(path, credit + "\n")
     return path
@@ -45,7 +50,7 @@ def read_chinese_source(mv_dir: Path) -> str:
             "缺少中文歌词来源，请先运行chinese-source或在官方字幕翻译时填写--translation-model"
         )
     credit = path.read_text(encoding="utf-8-sig").strip()
-    if credit == NETEASE_CREDIT:
+    if credit in {NETEASE_CREDIT, OFFICIAL_CREDIT}:
         return credit
     if credit.startswith(MODEL_PREFIX) and credit.endswith("）"):
         model = credit[len(MODEL_PREFIX) : -1].strip()

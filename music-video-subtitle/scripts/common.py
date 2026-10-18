@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-VERSION = "2.18.0"
+VERSION = "2.19.2"
 MP4_COPY_AUDIO = {"aac", "mp3", "alac", "ac3", "eac3"}
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 
@@ -137,19 +137,38 @@ def resolve_binary(name: str, explicit: str | None = None) -> Path:
 
 
 def find_source_video(mv_dir: Path) -> Path:
-    source_dir = ensure_workspace(mv_dir) / "source"
+    mv_dir = ensure_workspace(mv_dir)
     candidates = sorted(
         path.resolve()
-        for path in source_dir.iterdir()
+        for directory in (mv_dir / "review" / "preview", mv_dir / "source")
+        if directory.is_dir()
+        for path in directory.iterdir()
         if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES
     )
     if len(candidates) != 1:
-        raise ValueError(f"source目录必须恰好包含一个视频，当前为{len(candidates)}个")
+        raise ValueError(f"预览目录与旧source目录合计必须恰好包含一个片源，当前为{len(candidates)}个；请先核对重复文件")
     return candidates[0]
+
+
+def preview_source(mv_dir: Path) -> Path:
+    """Reuse the sole source; relocate legacy workspace media without copying."""
+    source = find_source_video(mv_dir)
+    directory = mv_dir.resolve() / "review" / "preview"
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / source.name
+    if source != destination:
+        if destination.exists():
+            raise FileExistsError(f"预览片源已存在，拒绝覆盖：{destination}")
+        source.rename(destination)
+    return destination
 
 
 def find_master_subtitle(mv_dir: Path) -> Path:
     subtitle_dir = ensure_workspace(mv_dir) / "subtitle"
+    # Existing projects may still carry their protected SRT. Prefer the ASS
+    # after migration, without deleting or overwriting the old human source.
+    if (subtitle_dir / "master.ass").is_file():
+        return (subtitle_dir / "master.ass").resolve()
     candidates = [
         path.resolve()
         for path in (
@@ -161,7 +180,7 @@ def find_master_subtitle(mv_dir: Path) -> Path:
     ]
     if len(candidates) != 1:
         raise ValueError(
-            "subtitle目录必须恰好包含一个master.srt、master.ass或master.ssa"
+            "缺少审定master.ass；旧项目可先用style转换已有SRT或SSA"
         )
     return candidates[0]
 

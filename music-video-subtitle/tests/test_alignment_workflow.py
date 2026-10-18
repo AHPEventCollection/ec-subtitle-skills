@@ -24,7 +24,7 @@ from alignment_workflow import (
     preflight_alignment,
     validate_alignment_candidates,
 )
-from subtitle_io import Cue, render_srt
+from subtitle_io import Cue, render_srt, render_ass
 
 
 class AlignmentWorkflowTests(unittest.TestCase):
@@ -55,12 +55,12 @@ class AlignmentWorkflowTests(unittest.TestCase):
             encoding="utf-8",
         )
         if with_master:
-            (mv_dir / "subtitle" / "master.srt").write_text(
-                render_srt(
+            (mv_dir / "subtitle" / "master.ass").write_text(
+                render_ass(
                     [
                         Cue(1, 3, "第一句", "最初の一行"),
                         Cue(4, 6, "第二句", "次の一行"),
-                    ]
+                    ], "fixture"
                 ),
                 encoding="utf-8",
             )
@@ -190,8 +190,8 @@ class AlignmentWorkflowTests(unittest.TestCase):
                 render_srt([Cue(1, 3, "第一句", "最初の一行")]),
                 encoding="utf-8",
             )
-            (mv_dir / "subtitle" / "master.srt").write_text(
-                render_srt([Cue(2, 4, "第二句", "次の一行")]),
+            (mv_dir / "subtitle" / "master.ass").write_text(
+                render_ass([Cue(2, 4, "第二句", "次の一行")], "fixture"),
                 encoding="utf-8",
             )
 

@@ -268,13 +268,41 @@ class SongProgressTests(unittest.TestCase):
                 patch("song_progress.resolve_binary", return_value=Path("ffmpeg")),
                 patch("render_policy.default_destination", return_value=destination),
                 patch("render_policy.select_encoder", return_value=("libx264", [])),
-                patch("render_policy.verify_encoded_media", return_value={"format": {"duration": "14"}}),
+                patch("render_policy.verify_encoded_media", return_value={
+                    "format": {"duration": "14"}, "verification": {"full_decode": "passed"},
+                }) as verify,
                 patch("song_progress.subprocess.run", side_effect=lambda *a, **k: destination.write_bytes(b"encoded")) as run,
             ):
                 render_final_video(root)
 
             self.assertEqual(3, video_inputs.call_count)
             self.assertIn(str(source), run.call_args.args[0])
+            verify.assert_called_once_with(Path("ffmpeg"), destination, source=source)
+
+    def test_failed_media_validation_does_not_write_completed_receipt(self) -> None:
+        from common import read_json
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, caption, progress = (root / name for name in ("source.mp4", "caption.ass", "progress.ass"))
+            for path in (source, caption, progress):
+                path.write_bytes(b"fixture")
+            destination = root / "rendered.mp4"
+            with (
+                patch("song_progress._video_inputs", return_value=(sample_manifest(1), source, caption, progress)),
+                patch("song_progress.resolve_binary", return_value=Path("ffmpeg")),
+                patch("render_policy.default_destination", return_value=destination),
+                patch("render_policy.select_encoder", return_value=("libx264", [])),
+                patch("render_policy.verify_encoded_media", side_effect=ValueError("输出缺少音轨")),
+                patch("song_progress.subprocess.run", side_effect=lambda *a, **k: destination.write_bytes(b"failed-output")),
+                self.assertRaisesRegex(ValueError, "缺少音轨"),
+            ):
+                render_final_video(root)
+            receipt = read_json(root / "run/evidence/render-receipt.json")
+            self.assertEqual("failed", receipt["status"])
+            self.assertIn("缺少音轨", receipt["error"])
+            self.assertNotIn("output_sha256", receipt)
+            self.assertTrue(destination.is_file())
 
     def test_segments_fill_fixed_width_without_numeric_label(self) -> None:
         bounds = segment_bounds(17)
