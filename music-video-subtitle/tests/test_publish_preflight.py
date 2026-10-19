@@ -13,7 +13,7 @@ class PublishPreflightTests(unittest.TestCase):
     def test_chapters_and_notes_never_leak_into_platform_body_or_tags(self):
         chapters = "00:00 开场\n01:20 演唱\n03:45 结束"
         body = ("人工正文\n中文歌词来源：网易云音乐\n使用模型：测试模型（校对）"
-                "\nToken用量：未取得（运行环境未提供）\n制作耗时：4分钟（机器处理）"
+                "\nToken用量：12000\n制作耗时：4分钟"
                 "\n使用技能：ec-subtitle-skills")
         for platform in ("微博", "小红书", "B站"):
             with self.subTest(platform=platform):
@@ -26,12 +26,18 @@ class PublishPreflightTests(unittest.TestCase):
                 self.assertEqual(check_chapter_comment(chapters), [])
                 self.assertEqual(check_production_credit(post.body), [])
 
-    def test_credit_requires_fields_but_does_not_invent_unavailable_usage(self):
-        body = ("使用模型：测试模型（校对）\nToken用量：未取得（本任务未提供用量记录）"
-                "\n制作耗时：未取得（没有起止记录）\n使用技能：ec-subtitle-skills")
+    def test_credit_allows_omitted_statistics_but_rejects_internal_failure_notes(self):
+        body = "使用模型：测试模型\n使用技能：ec-subtitle-skills"
         self.assertEqual(check_production_credit(body), [])
-        self.assertEqual(len(check_production_credit("正文")), 4)
+        self.assertEqual(len(check_production_credit("正文")), 2)
         self.assertTrue(check_production_credit(body.replace("ec-subtitle-skills", "另一个技能")))
+        for extra in ("Token用量：未取得（本任务未提供用量记录）", "制作耗时：未取得（没有起止记录）",
+                      "制作耗时：本次成片阶段108.565秒，含压制与机器检查",
+                      "使用模型：测试模型；原工程模型记录未取得"):
+            with self.subTest(extra=extra):
+                candidate = body.replace("使用模型：测试模型", extra) if extra.startswith("使用模型") else body + "\n" + extra
+                self.assertTrue(check_production_credit(candidate))
+        self.assertEqual(check_production_credit(body + "\nToken用量：12000（本次修订）\n制作耗时：18分钟"), [])
 
     def test_chapter_text_requires_opening_ending_and_ordered_times(self):
         self.assertEqual(check_chapter_comment("00:00 开场\n01:02:03 结束"), [])
@@ -48,8 +54,8 @@ class PublishPreflightTests(unittest.TestCase):
             (root / "output/fixture.hardsub.v01.mp4").write_bytes(b"test video")
             (root / "output/fixture.cover.v01.jpg").write_bytes(b"test cover")
             copy = root / "output/fixture.publish-copy.v01.md"
-            credit = ("使用模型：测试模型\nToken用量：未取得（未提供）"
-                      "\n制作耗时：1分钟（机器处理）\n使用技能：ec-subtitle-skills")
+            credit = ("使用模型：测试模型\nToken用量：12000"
+                      "\n制作耗时：1分钟\n使用技能：ec-subtitle-skills")
             text = "\n".join(f"## {platform}\n标题：标题\n\n正文\n{credit}\n\n章节评论：\n00:00 开场\n03:00 结束\n"
                              for platform in ("微博", "小红书", "B站"))
             copy.write_text(text, encoding="utf-8")

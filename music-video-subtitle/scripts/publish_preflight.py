@@ -135,8 +135,14 @@ def check_production_credit(body: str) -> list[str]:
     issues = []
     for label in ("使用模型", "Token用量", "制作耗时", "使用技能"):
         match = re.search(rf"(?m)^{label}：([^\r\n]*)$", body)
+        if match is None and label in ("Token用量", "制作耗时"):
+            continue
         if match is None or not match[1].strip():
             issues.append(f"制作署名缺少{label}")
+        elif re.search(r"未取得|未提供|统计缺失|待统计|未统计|待补|当前对话|原工程", match[1]):
+            issues.append(f"{label}含内部缺失说明；说明留在工程记录，未核实统计不写入公开正文")
+        elif label == "制作耗时" and re.search(r"^\s*(?:本次)?(?:成片阶段|压制|编码|机器检查|机器验收|finish)|\d+\.\d+秒", match[1], re.I):
+            issues.append("制作耗时不能用单个机器阶段或毫秒级计时凑数")
         elif label == "使用技能" and "ec-subtitle-skills" not in match[1]:
             issues.append("使用技能须注明ec-subtitle-skills")
     return issues
