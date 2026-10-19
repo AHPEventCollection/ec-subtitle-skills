@@ -64,6 +64,8 @@ python -B $pipeline official-subtitle-review --mv-dir $mvDir --translation-model
 
 ## 人工门禁与出片
 
+歌词候选先执行[歌词分段标准](references/quality-gates.md#歌词分段标准)，按文字长度和8秒复核阈值判断，语义与实际演唱边界优先；弹幕另按[歌词弹幕分段标准](references/publish-handoff.md#歌词弹幕分段标准)适配，采用独立的阅读与时长目标
+
 先交付完整视频与同名候选SRT供人工复对。仅在用户明确选定候选后直接建立`subtitle/master.ass`，不再生成master.srt，已有人工主字幕不得被候选覆盖。用户已确认候选并明确要求直接出片时，此授权覆盖正式预览、压制和机器验收，不再重复问样式确认
 
 到本阶段只读[样式、压制与交付](references/delivery-workflow.md)，涉及样式异常才查[质量门禁](references/quality-gates.md)

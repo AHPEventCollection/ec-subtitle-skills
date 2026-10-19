@@ -3,7 +3,7 @@
 只处理`{{section_dir}}`
 
 1. 读取`input.json`、`audio.flac`和已知歌词
-2. 保持歌词正文、数量和顺序；歌词事件的`role`为`lyric`或省略
+2. 先在工作副本按[歌词分段标准](../references/quality-gates.md#歌词分段标准)完成分段，保留原始来源；随后保持工作歌词正文、数量和顺序，歌词事件的`role`为`lyric`或省略
 3. 使用ASR、日语发音匹配和人声边界作为时间证据
 4. 时间相对正式分段起点
 5. 歌词事件完成后运行`detect_embedded_speech.py`，检查开场前、间奏和收尾的歌词外讲话候选

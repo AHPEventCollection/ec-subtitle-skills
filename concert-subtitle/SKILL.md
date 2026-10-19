@@ -100,6 +100,8 @@ python scripts/build_work_packages.py --concert-dir "<concert-dir>"
 
 ## 3.分别制作歌曲与MC
 
+歌词候选先执行[歌词分段标准](references/quality-gates.md#歌词分段标准)，按文字长度和8秒复核阈值判断，语义与实际演唱边界优先；弹幕另按[歌词弹幕分段标准](references/bilibili-danmaku.md#歌词弹幕分段标准)适配，采用独立的阅读与时长目标
+
 每个分段的输入、字幕和证据保存在对应的`run/sections/<section-id>`目录，字段与文件边界见[分段契约](references/section-contracts.md)
 
 - 歌曲：读取[歌曲模板](templates/song-subtitles.md)，已知歌词决定正文与顺序，ASR、日文读音匹配和人声边界提供时间证据；完成日中双语事件后扫描开场前、间奏和收尾的歌词外讲话
