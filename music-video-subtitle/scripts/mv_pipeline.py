@@ -429,7 +429,7 @@ def finish(
     ffprobe_value: str | None = None,
     crf: int = 18,
     preset: str = "medium",
-    encoder: str = "libx264",
+    encoder: str = "auto",
     nvenc_cq: int = 18,
     nvenc_bitrate_kbps: int = 0,
 ) -> Path:
@@ -446,7 +446,7 @@ def finish(
         return result
 
     # Validate options before creating any formal subtitle or media output.
-    _encoder_arguments(encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
+    _validate_encoder_request(encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
     mv_dir = ensure_workspace(mv_dir)
     masters = [mv_dir / "subtitle" / name for name in ("master.ass", "master.srt", "master.ssa")]
     master = next((path for path in masters if path.is_file()), masters[0])
@@ -482,12 +482,13 @@ def finish(
     status = delivery_status(mv_dir)
     version = latest_version(mv_dir / "output", mv_dir.name)
     report = mv_dir / "review" / f"final-v{version:02d}-timings.md"
-    quality = (f"{preset} / CRF{crf}" if encoder == "libx264"
-               else f"p7 / HQ / CQ{nvenc_cq} / VBR {nvenc_bitrate_kbps}kbps（0为质量模式）")
+    encoding_report = mv_dir / "review" / f"final-v{version:02d}-encoding.txt"
+    encoding_details = (encoding_report.read_text(encoding="utf-8").strip()
+                        if encoding_report.is_file() else "实际编码器未确认：缺少本版本编码回执")
     total = time.perf_counter() - started
     write_text(report, "\n".join([
         f"# 成品阶段耗时v{version:02d}", "",
-        f"- 编码器　{encoder}", f"- 参数　{quality}",
+        encoding_details,
         "- 计时范围　finish业务入口至交付状态，不含外层运行时启动和人工查看", "",
         "|阶段|秒|", "|---|---:|",
         *[f"|{label}|{elapsed:.3f}|" for label, elapsed in timings],
@@ -503,6 +504,11 @@ def _encoder_arguments(
 ) -> list[str]:
     if encoder == "libx264":
         return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
+    if encoder == "h264_qsv":
+        return ["-c:v", encoder, "-preset", "medium", "-global_quality", str(crf)]
+    if encoder == "h264_amf":
+        return ["-c:v", encoder, "-quality", "quality", "-rc", "cqp",
+                "-qp_i", str(crf), "-qp_p", str(crf)]
     if encoder != "h264_nvenc":
         raise ValueError(f"不支持的视频编码器：{encoder}")
     if not 0 <= nvenc_cq <= 51 or nvenc_bitrate_kbps < 0:
@@ -521,17 +527,64 @@ def _encoder_arguments(
     return arguments
 
 
+HARDWARE_ENCODERS = ("h264_nvenc", "h264_qsv", "h264_amf")
+ENCODER_CHOICES = ("auto", "libx264", *HARDWARE_ENCODERS)
+
+
+def _validate_encoder_request(
+    encoder: str, crf: int, preset: str, nvenc_cq: int, nvenc_bitrate_kbps: int,
+) -> None:
+    if encoder not in ENCODER_CHOICES:
+        raise ValueError(f"不支持的视频编码器：{encoder}")
+    _encoder_arguments("h264_nvenc" if encoder == "auto" else encoder,
+                       crf, preset, nvenc_cq, nvenc_bitrate_kbps)
+
+
+def _select_encoder(
+    ffmpeg: Path, info: Any, requested: str, crf: int, preset: str,
+    nvenc_cq: int, nvenc_bitrate_kbps: int,
+) -> tuple[str, list[str]]:
+    _validate_encoder_request(requested, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
+    if requested == "libx264":
+        return requested, ["手动选择CPU/libx264，未探测硬件"]
+    attempts = []
+    for candidate in HARDWARE_ENCODERS if requested == "auto" else (requested,):
+        command = [str(ffmpeg), "-nostdin", "-hide_banner", "-loglevel", "error",
+                   "-f", "lavfi", "-i",
+                   f"color=black:s={info.width}x{info.height}:r={info.frame_rate}",
+                   "-frames:v", "40",
+                   *_encoder_arguments(candidate, crf, preset, nvenc_cq, nvenc_bitrate_kbps),
+                   "-pix_fmt", "yuv420p", "-f", "null", "-"]
+        print(f"[MV] 试编码 {candidate}（片源尺寸与帧率）", flush=True)
+        try:
+            result = subprocess.run(command, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=30, check=False)
+        except subprocess.TimeoutExpired:
+            attempts.append(f"{candidate}：试编码超过30秒")
+        else:
+            if result.returncode == 0:
+                attempts.append(f"{candidate}：试编码通过")
+                print(f"[MV] 使用显卡编码 {candidate}", flush=True)
+                return candidate, attempts
+            detail = (result.stderr or "未提供错误详情").strip()[-1600:]
+            attempts.append(f"{candidate}：试编码失败（{result.returncode}） {detail}")
+    if requested != "auto":
+        raise RuntimeError("指定的硬件编码器不可用，不自动替换：\n" + "\n".join(attempts))
+    print("[MV] 硬件试编码均未通过，明确回退CPU/libx264\n" + "\n".join(attempts), flush=True)
+    return "libx264", attempts
+
+
 def render(
     mv_dir: Path,
     ffmpeg_value: str | None = None,
     ffprobe_value: str | None = None,
     crf: int = 18,
     preset: str = "medium",
-    encoder: str = "libx264",
+    encoder: str = "auto",
     nvenc_cq: int = 18,
     nvenc_bitrate_kbps: int = 0,
 ) -> Path:
-    encoder_args = _encoder_arguments(encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
+    _validate_encoder_request(encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
     mv_dir = ensure_workspace(mv_dir)
     source = find_source_video(mv_dir)
     styled = find_styled_ass(mv_dir)
@@ -554,6 +607,11 @@ def render(
         raise ValueError(
             f"源音频{info.audio_codec}不适合直接复制到通用MP4，请更换兼容音轨片源"
         )
+    ffmpeg = resolve_binary("ffmpeg", ffmpeg_value)
+    selected_encoder, probes = _select_encoder(
+        ffmpeg, info, encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps,
+    )
+    encoder_args = _encoder_arguments(selected_encoder, crf, preset, nvenc_cq, nvenc_bitrate_kbps)
     output_dir = mv_dir / "output"
     version = next_version(output_dir, mv_dir.name)
     video = output_dir / f"{mv_dir.name}.hardsub.v{version:02d}.mp4"
@@ -562,7 +620,7 @@ def render(
     try:
         subprocess.run(
             [
-                str(resolve_binary("ffmpeg", ffmpeg_value)),
+                str(ffmpeg),
                 "-nostdin",
                 "-hide_banner",
                 "-loglevel",
@@ -589,6 +647,10 @@ def render(
         )
         os.replace(partial, video)
         shutil.copy2(styled, final_ass)
+        write_text(mv_dir / "review" / f"final-v{version:02d}-encoding.txt", "\n".join([
+            f"请求编码器　{encoder}", f"实际编码器　{selected_encoder}",
+            f"编码参数　{' '.join(encoder_args)}", *probes,
+        ]))
     finally:
         partial.unlink(missing_ok=True)
     return video
@@ -1225,7 +1287,7 @@ def build_parser() -> argparse.ArgumentParser:
     finish_parser.add_argument("--ffprobe")
     finish_parser.add_argument("--crf", type=int, default=18)
     finish_parser.add_argument("--preset", default="medium")
-    finish_parser.add_argument("--encoder", choices=("libx264", "h264_nvenc"), default="libx264")
+    finish_parser.add_argument("--encoder", choices=ENCODER_CHOICES, default="auto")
     finish_parser.add_argument("--nvenc-cq", type=int, default=18)
     finish_parser.add_argument("--nvenc-bitrate-kbps", type=int, default=0)
 
@@ -1235,7 +1297,7 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--ffprobe")
     render_parser.add_argument("--crf", type=int, default=18)
     render_parser.add_argument("--preset", default="medium")
-    render_parser.add_argument("--encoder", choices=("libx264", "h264_nvenc"), default="libx264")
+    render_parser.add_argument("--encoder", choices=ENCODER_CHOICES, default="auto")
     render_parser.add_argument("--nvenc-cq", type=int, default=18)
     render_parser.add_argument("--nvenc-bitrate-kbps", type=int, default=0)
 

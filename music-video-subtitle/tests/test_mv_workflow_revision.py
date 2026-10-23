@@ -152,6 +152,9 @@ class RevisedWorkflowTests(unittest.TestCase):
             style_subtitle(mv)
             preview(mv)
             final = render(mv, preset="ultrafast")
+            encoding = (mv / "review/final-v01-encoding.txt").read_text(encoding="utf-8")
+            self.assertIn("请求编码器　auto", encoding)
+            self.assertRegex(encoding, r"实际编码器　(?:h264_nvenc|h264_qsv|h264_amf|libx264)")
             report = validate(mv, final)
             self.assertTrue(report.is_file())
             from review_checks import review_check_issues

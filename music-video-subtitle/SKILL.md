@@ -75,7 +75,7 @@ python -B $pipeline finish --mv-dir $mvDir --candidate "<已确认候选.srt>"
 # 已有master.ass时省略--candidate
 ```
 
-`finish`自动逐阶段打印耗时和成品规格，保存`review/final-vNN-timings.md`，沿用机器验收报告与交付状态完成回读，不另写逐曲计时或回读脚本。下载耗时按source-acquisition.json分别列出主片源和兼容音轨补取调用；说明是否含启动、解析和首播等待。复用片源的重跑须明确标为不含下载，不得称为全流程测速。默认x264 medium/CRF18不变；只有用户要求硬件编码试验时才按[压制参数](references/delivery-workflow.md)显式启用NVENC，未经体积和画质对照不切换默认
+`finish`自动逐阶段打印耗时和成品规格，保存`review/final-vNN-timings.md`，沿用机器验收报告与交付状态完成回读，不另写逐曲计时或回读脚本。下载耗时按source-acquisition.json分别列出主片源和兼容音轨补取调用；说明是否含启动、解析和首播等待。复用片源的重跑须明确标为不含下载，不得称为全流程测速。默认auto按片源尺寸与帧率实际试编码，依次优先NVENC、QSV、AMF，全部不可用才明确回退CPU/libx264；实际编码器、参数和探测结果保存到同版本编码TXT并纳入耗时报告。手动指定方式见[压制参数](references/delivery-workflow.md#编码选择与直接回读)
 
 `finish`依次建立主字幕、生成标准ASS与完整外挂预览、递增版本压制、验收并落盘已就绪的文案和封面。字幕样式固定中文上方暖黄80号、原文下方白色57号、不自动折行，超宽只水平压缩且低于55%退回调整。音频必须直拷贝，视频尺寸保持片源，禁止为通过压制偷换音频转码
 

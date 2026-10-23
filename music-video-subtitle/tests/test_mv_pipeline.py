@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: E402
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ from common import MediaInfo
 from mv_pipeline import (
     _available_cover_sources,
     _encoder_arguments,
+    _select_encoder,
     _copy_ready,
     _preview_windows,
     _read_preview_windows,
@@ -62,17 +64,64 @@ SRT = r"""1
 
 
 class SubtitleIoTests(unittest.TestCase):
-    def test_encoder_defaults_preserve_x264_and_nvenc_has_separate_quality(self):
-        args = build_parser().parse_args(["finish", "--mv-dir", "fixture"])
-        self.assertEqual(("libx264", "medium", 18), (args.encoder, args.preset, args.crf))
+    def test_encoder_defaults_to_auto_and_nvenc_has_separate_quality(self):
+        for command in ("finish", "render"):
+            args = build_parser().parse_args([command, "--mv-dir", "fixture"])
+            self.assertEqual(("auto", "medium", 18), (args.encoder, args.preset, args.crf))
         self.assertEqual(["-c:v", "libx264", "-preset", "medium", "-crf", "18"],
-                         _encoder_arguments(args.encoder, args.crf, args.preset, 18, 0))
+                         _encoder_arguments("libx264", args.crf, args.preset, 18, 0))
         nvenc = _encoder_arguments("h264_nvenc", 18, "medium", 19, 1700)
         self.assertNotIn("-crf", nvenc)
         self.assertEqual("19", nvenc[nvenc.index("-cq") + 1])
         self.assertEqual("p7", nvenc[nvenc.index("-preset") + 1])
         self.assertEqual("1700k", nvenc[nvenc.index("-b:v") + 1])
         self.assertEqual("3400k", nvenc[nvenc.index("-maxrate") + 1])
+
+    def test_auto_probes_real_encoding_and_stops_at_available_hardware(self):
+        info = SimpleNamespace(width=1440, height=1080, frame_rate="24000/1001")
+        with patch("mv_pipeline.subprocess.run", side_effect=[
+            SimpleNamespace(returncode=1, stderr="NVIDIA device unavailable"),
+            SimpleNamespace(returncode=0, stderr=""),
+        ]) as run:
+            selected, probes = _select_encoder(Path("ffmpeg"), info, "auto", 18, "medium", 18, 0)
+        self.assertEqual("h264_qsv", selected)
+        self.assertEqual(2, run.call_count)
+        self.assertIn("NVIDIA device unavailable", probes[0])
+        self.assertIn("color=black:s=1440x1080:r=24000/1001", run.call_args.args[0])
+        self.assertIn("h264_qsv", run.call_args.args[0])
+
+    def test_auto_falls_back_only_after_all_hardware_probes_fail(self):
+        info = SimpleNamespace(width=1920, height=1080, frame_rate="30/1")
+        with patch("mv_pipeline.subprocess.run", side_effect=[
+            subprocess.TimeoutExpired("ffmpeg", 30),
+            SimpleNamespace(returncode=1, stderr="QSV unavailable"),
+            SimpleNamespace(returncode=1, stderr="AMF unavailable"),
+        ]) as run:
+            selected, probes = _select_encoder(Path("ffmpeg"), info, "auto", 18, "medium", 18, 0)
+        self.assertEqual("libx264", selected)
+        self.assertEqual(3, run.call_count)
+        self.assertEqual(3, len(probes))
+        self.assertIn("超过30秒", probes[0])
+
+    def test_explicit_hardware_does_not_fall_back_and_cpu_does_not_probe(self):
+        info = SimpleNamespace(width=1920, height=1080, frame_rate="30/1")
+        with patch("mv_pipeline.subprocess.run", return_value=SimpleNamespace(
+            returncode=1, stderr="device unavailable",
+        )) as run:
+            with self.assertRaisesRegex(RuntimeError, "指定的硬件编码器不可用"):
+                _select_encoder(Path("ffmpeg"), info, "h264_nvenc", 18, "medium", 18, 0)
+            self.assertEqual(1, run.call_count)
+            run.reset_mock()
+            selected, _ = _select_encoder(Path("ffmpeg"), info, "libx264", 18, "medium", 18, 0)
+            self.assertEqual("libx264", selected)
+            run.assert_not_called()
+
+    def test_missing_ffmpeg_is_not_treated_as_unavailable_hardware(self):
+        info = SimpleNamespace(width=1920, height=1080, frame_rate="30/1")
+        with patch("mv_pipeline.subprocess.run", side_effect=FileNotFoundError("ffmpeg missing")) as run:
+            with self.assertRaises(FileNotFoundError):
+                _select_encoder(Path("missing"), info, "auto", 18, "medium", 18, 0)
+            self.assertEqual(1, run.call_count)
 
     def test_invalid_nvenc_options_do_not_create_master(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -492,6 +541,10 @@ class ArtifactWorkflowTests(unittest.TestCase):
             status = mv_dir / "output" / "delivery-status.v01.md"
             video = mv_dir / "output" / "fixture.hardsub.v01.mp4"
             video.write_bytes(b"mock-rendered-video")
+            (mv_dir / "review" / "final-v01-encoding.txt").write_text(
+                "请求编码器　auto\n实际编码器　h264_nvenc\n编码参数　-c:v h264_nvenc",
+                encoding="utf-8",
+            )
             calls: list[str] = []
 
             with (
@@ -521,6 +574,8 @@ class ArtifactWorkflowTests(unittest.TestCase):
                 result = finish(mv_dir, candidate)
 
             self.assertEqual(status, result)
+            timing_text = (mv_dir / "review" / "final-v01-timings.md").read_text(encoding="utf-8")
+            self.assertIn("实际编码器　h264_nvenc", timing_text)
             self.assertTrue((mv_dir / "subtitle" / "master.ass").is_file())
             self.assertFalse((mv_dir / "subtitle" / "master.srt").exists())
             self.assertEqual(

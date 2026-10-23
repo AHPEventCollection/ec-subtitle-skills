@@ -136,16 +136,20 @@ python -B $pipeline archive --mv-dir $mvDir --destination "<archive-directory>"
 - 本地保留的来源、歌词、审定字幕和预览材料
 
 
-## 编码实验与直接回读
+## 编码选择与直接回读
 
-默认保持`libx264 --preset medium --crf 18`。用户明确要求硬件编码试验时，在隔离工作区运行：
+`finish`和`render`默认`--encoder auto`，按片源尺寸、帧率及实际编码参数执行短片段试编码，依次选择可用的`h264_nvenc`、`h264_qsv`、`h264_amf`。全部探测失败或超时才明确回退`libx264 --preset medium --crf 18`，输出失败原因；缺少FFmpeg等执行环境错误直接报告，不当作硬件不可用。自动选择无须另行批准或开启实验模式。需要手动指定时：
 
 ```powershell
+# 默认自动选择显卡
+python -B $pipeline finish --mv-dir $mvDir
+# 明确指定NVIDIA或CPU
 python -B $pipeline finish --mv-dir $mvDir --encoder h264_nvenc --nvenc-cq 18
+python -B $pipeline finish --mv-dir $mvDir --encoder libx264 --preset medium --crf 18
 # 同体积目标对照时指定视频平均目标码率，0表示纯质量模式
 python -B $pipeline finish --mv-dir $mvDir --encoder h264_nvenc --nvenc-cq 18 --nvenc-bitrate-kbps <视频码率>
 ```
 
-NVENC固定p7、HQ、VBR、双遍、空间与时间AQ、32帧前瞻和3个B帧，保留原有字幕滤镜、画幅、像素格式和音频直拷贝。CQ与x264的CRF不能按相同数字视为相同画质。编码器不可用时直接报错，不自动降级、换编码器或安装驱动；默认流程不受影响
+NVENC固定p7、HQ、VBR、双遍、空间与时间AQ、32帧前瞻和3个B帧，保留原有字幕滤镜、画幅、像素格式和音频直拷贝。CQ与x264的CRF不能按相同数字视为相同画质。QSV使用medium/global_quality，AMF使用quality/CQP，两者质量参数取`--crf`数值，但不视为与x264画质等价。显式指定硬件编码器时不可用就报错，不自动替换；显式指定libx264时直接使用CPU。正式压制失败保留真实错误，不把所有压制错误当作显卡不可用而自动重压，不自动安装驱动
 
-`finish`在同一调用里输出各阶段进度、成品编码/尺寸/时长/大小、机器校验结论与抽帧路径，并生成同版本耗时Markdown。运行后集中读取机器报告、交付状态和抽帧，不再新增逐曲计时脚本、重复媒体探测或整份复制文件哈希；实际画面与播放检查仍需执行
+`finish`在同一调用里输出各阶段进度、成品编码/尺寸/时长/大小、机器校验结论与抽帧路径，并生成同版本耗时Markdown及`review/final-vNN-encoding.txt`。编码回执记录请求模式、实际编码器、实际参数及硬件试编码结果；耗时报告引用实际选择，不把auto或请求值当作实际编码器。运行后集中读取机器报告、交付状态和抽帧，不再新增逐曲计时脚本、重复媒体探测或整份复制文件哈希；实际画面与播放检查仍需执行
