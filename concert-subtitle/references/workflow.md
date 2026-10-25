@@ -303,10 +303,9 @@ python scripts/review_section.py `
 
 归档保存成品和必要工程资料，唯一源文件、人工字幕及必要材料先保存，工作区外原始素材保持原位。长期保留范围及交付物布局按本地约定执行，完整工作区复制用于防止遗漏，不代表冗余媒体必须长期保留；整理前核对唯一内容和已验证副本
 
-终版硬字幕完成并获得用户归档授权后运行`archive_concert.py archive`。入口先重新执行全局验收并确认
-`run/evidence/render-receipt.json`记录的成片已完成且Manifest和成片哈希一致；无回执的旧项目仍检查`output/<concert-id>.hardsub.mp4`。随后调用Skill内置`scripts/verified_archive.py`
-复制整个单场工作区，并将工作区外成片纳入归档的`output`。通用层统一处理目标路径类型检查、失败即停、源稳定性检查、
-复制后完整清单与SHA256复核、锁和临时残留清理
+收到操作人员归档指令即运行`archive_concert.py archive`，不执行全局验收，不要求Manifest、终版硬字幕、文案、封面、统计或发布状态齐全。复制当前单场工程并保留所有未完成状态；若`run/evidence/render-receipt.json`指向仍存在的外置成片，将该文件当前内容纳入归档的`output`，不要求回执为completed或与旧Manifest、旧哈希一致。回执损坏或指向文件缺失时说明实际情况并继续保存现有工程，不补造验收结果
+
+入口调用Skill内置`scripts/verified_archive.py`完成复制、源稳定性检查、完整清单与SHA256复核；副本未核验成功时不清理源文件
 
 仅在项目规则或本次用户指令已授权清理，且外部归档确认可用后运行`archive_concert.py cleanup`，直接沿用已有明确授权。通用层再次核对外部目标和本地
 归档源及外置成片未变化后删除当前单场工作区，工作区外成片保持原位。演唱会工作流不维护PowerShell目录创建、复制或

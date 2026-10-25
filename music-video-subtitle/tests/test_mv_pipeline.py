@@ -37,6 +37,7 @@ from mv_pipeline import (
     initialize,
     main,
     preview,
+    prepare_official_route,
     stage_delivery,
 )
 from chinese_source import record_chinese_source
@@ -386,6 +387,22 @@ class ArtifactWorkflowTests(unittest.TestCase):
             )
             self.assertFalse(_copy_ready(path, credit))
 
+    def test_delivery_copy_ignores_statistics_and_legacy_chapter_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "copy.md"
+            credit = "中文歌词来源：官方YouTube中文字幕"
+            text = "\n\n".join(
+                f"## {platform}\n标题：标题\n正文：已核实的完整介绍\n{credit}"
+                "\nToken用量：待补\n制作耗时：尚未完成\n使用模型：待补"
+                "\n章节评论：\n待补\n发布备注：保留人工记录"
+                for platform in ("微博", "小红书", "B站", "视频号")
+            )
+            path.write_text(text, encoding="utf-8")
+            self.assertTrue(_copy_ready(path, credit))
+            self.assertEqual(path.read_text(encoding="utf-8"), text)
+            path.write_text(text.replace("已核实的完整介绍", "待补正文"), encoding="utf-8")
+            self.assertFalse(_copy_ready(path, credit))
+
     def test_build_subtitle_promotes_only_checked_alignment_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -472,7 +489,45 @@ class ArtifactWorkflowTests(unittest.TestCase):
             self.assertIn("获取策略　ytdlp-global-auto", source_report)
             self.assertEqual([evidence], list(mv_dir.rglob("*.json")))
             prepare_official.assert_called_once_with(mv_dir)
-            reference.assert_called_once_with(mv_dir)
+            reference.assert_not_called()
+
+    def test_official_prepare_queries_reference_only_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subtitle = root / "source.vtt"
+            prepared = root / "translation.tsv"
+            with (
+                patch("mv_pipeline.prepare_official_subtitle", return_value=prepared) as prepare,
+                patch("mv_pipeline.acquire_official_lyrics_reference") as reference,
+            ):
+                self.assertEqual(prepared, prepare_official_route(root, subtitle))
+                prepare.assert_called_once_with(root, subtitle)
+                reference.assert_not_called()
+                self.assertEqual(prepared, prepare_official_route(
+                    root, subtitle, reference_netease=True,
+                ))
+                reference.assert_called_once_with(root, None)
+            parser = build_parser()
+            args = ["official-subtitle-prepare", "--mv-dir", str(root)]
+            self.assertFalse(parser.parse_args(args).reference_netease)
+            self.assertTrue(parser.parse_args(args + ["--reference-netease"]).reference_netease)
+
+    def test_archive_cli_needs_no_media_runtime_or_completed_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mv_dir = root / "workspace/mvs/unfinished"
+            initialize(mv_dir)
+            notes = mv_dir / "work/notes.txt"
+            notes.write_text("unfinished operator work", encoding="utf-8")
+            destination = root / "archive"
+            with patch("mv_pipeline.dispatch_script_in_profile") as dispatch:
+                result = main(["archive", "--mv-dir", str(mv_dir),
+                               "--destination", str(destination)])
+            self.assertEqual(result, 0)
+            dispatch.assert_not_called()
+            self.assertEqual((destination / "工程/work/notes.txt").read_bytes(), notes.read_bytes())
+            self.assertFalse((destination / "delivery-check.v01.md").exists())
+            self.assertTrue(notes.is_file())
 
     def test_build_candidate_dispatches_to_bound_base_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -502,15 +557,10 @@ class ArtifactWorkflowTests(unittest.TestCase):
                 "stage-delivery",
                 "delivery-status",
                 "delivery-check",
-                "archive",
             ):
                 arguments = [action, "--mv-dir", str(mv_dir)]
                 if action == "import-source":
                     arguments.extend(["--source", str(Path(temporary) / "source.mkv")])
-                if action == "archive":
-                    arguments.extend(
-                        ["--destination", str(Path(temporary) / "archive")]
-                    )
                 with patch(
                     "mv_pipeline.dispatch_script_in_profile", return_value=7
                 ) as dispatch:

@@ -6,8 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import VERSION, canonical_hash, console_version, file_sha256, load_manifest, read_json
-from validate_concert import validate_concert
+from common import VERSION, console_version, read_json
 
 
 DEFAULT_ARCHIVE_TOOL = Path(__file__).resolve().with_name("verified_archive.py")
@@ -35,22 +34,26 @@ def archive_concert(
     archive_tool: Path | None = None,
 ) -> Path:
     concert_dir = concert_dir.resolve()
-    gate = validate_concert(concert_dir)
-    if gate["result"] != "passed":
-        codes = ",".join(item.get("code", "unknown") for item in gate["failures"])
-        raise ValueError(f"演唱会全局验收未通过：{codes}")
-    manifest = load_manifest(concert_dir)
-    hard_sub = concert_dir / "output" / f"{manifest['concert_id']}.hardsub.mp4"
+    # Archive the operator-selected state, including unfinished projects. A
+    # receipt only locates an external file; it is not an acceptance gate.
+    external_files: list[Path] = []
     receipt_path = concert_dir / "run" / "evidence" / "render-receipt.json"
     if receipt_path.is_file():
-        receipt = read_json(receipt_path)
-        if receipt.get("status") != "completed" or receipt.get("manifest_sha256") != canonical_hash(manifest):
-            raise ValueError("成片压制未完成或对应Manifest已过期")
-        hard_sub = Path(receipt["output"]).resolve()
-        if not hard_sub.is_file() or file_sha256(hard_sub) != receipt.get("output_sha256"):
-            raise ValueError("外置成片不存在或哈希与压制回执不一致")
-    if not hard_sub.is_file():
-        raise FileNotFoundError(f"缺少终版硬字幕视频：{hard_sub}")
+        try:
+            receipt = read_json(receipt_path)
+            output = receipt.get("output") if isinstance(receipt, dict) else None
+            if isinstance(output, str) and output.strip():
+                hard_sub = Path(output)
+                if not hard_sub.is_absolute():
+                    hard_sub = concert_dir / hard_sub
+                hard_sub = hard_sub.resolve()
+                if hard_sub.is_file():
+                    if not hard_sub.is_relative_to(concert_dir):
+                        external_files.append(hard_sub)
+                else:
+                    print(f"归档说明：回执所指文件不存在，保留当前工程：{hard_sub}", file=sys.stderr)
+        except (OSError, ValueError) as error:
+            print(f"归档说明：压制回执无法读取，原文件随工程保存：{error}", file=sys.stderr)
     destination = destination.resolve()
     report_path = (
         report.resolve()
@@ -69,7 +72,7 @@ def archive_concert(
             str(destination),
             "--report",
             str(report_path),
-            *(["--include", str(hard_sub)] if not hard_sub.is_relative_to(concert_dir) else []),
+            *[argument for file in external_files for argument in ("--include", str(file))],
         ],
         check=True,
     )
@@ -99,7 +102,7 @@ def cleanup_concert(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="验收、可靠归档并清理演唱会工作区")
+    parser = argparse.ArgumentParser(description="按操作人员指令归档当前演唱会工程并核验副本")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     subparsers = parser.add_subparsers(dest="action", required=True)
     archive_parser = subparsers.add_parser("archive")

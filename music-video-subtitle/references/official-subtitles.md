@@ -1,20 +1,21 @@
-# 官方字幕与网易云正文匹配
+# 官方字幕与按需中文参考
 
 ## 官方字幕优先与歌词回退
 
-用户指定官方中文字幕时，核实其为人工上传轨而非自动翻译，按原唱语言轨逐事件比对。中文与原文的起止时间和事件数一致时，直接填入`translation.tsv`和`chinese.tsv`并保留官方文本，不调用模型改译；不一致时先解决分句映射。用`chinese-source --kind official`记录`中文歌词来源：官方YouTube中文字幕`，保留原始字幕和核对证据，再运行`official-subtitle-build`。用户明确授权确认官方中字后直接出片时，核实后执行`finish`
+用户指定官方中文字幕时，核实其为人工上传轨而非自动翻译，按原唱语言轨逐事件比对。中文与原文的起止时间和事件数一致时，直接填入`translation.tsv`和`chinese.tsv`并保留官方文本，不调用模型改译、不查询网易云；不一致时先解决分句映射。用`chinese-source --kind official`记录`中文歌词来源：官方YouTube中文字幕`，保留原始字幕和核对证据，再运行`official-subtitle-build`。用户明确授权确认官方中字后直接出片时，核实后执行`finish`
 
 下载命令固定调用系统共享`ytdlp-global`，由全局入口统一解析`yt-dlp`、`yt-dlp-ejs`、JS运行时、FFmpeg、缓存、认证和客户端策略。项目只请求SDR优先、最高4320p、MKV、页面缩略图及人工字幕侧文件，不使用`--write-auto-subs`。下载结束后自动检查`source/`中的任意语言的官方VTT、SRT、ASS或SSA
 
 YouTube客户端策略、错误分类和认证边界见[YouTube取源](youtube-acquisition.md)。这些策略只由全局入口维护，项目不得另设客户端回退。所有尝试写入`review/source-acquisition.json`，只有最终成功策略进入`source/source.md`
 
-发现唯一官方原文字幕时，以其原文正文和事件顺序为冻结基准，以逐条起止时间为初始时间轴。仍必须查询网易云前5个候选，综合歌名、艺人、原文正文相似度、总条数、重复句顺序和整段相对时段匹配现成中文。网易云绝对时间不得直接覆盖现场版时间，只用于匹配重复段落和提示相对时段偏移；真正的早起或晚起必须结合实际演唱或独立音频对齐确认
+发现唯一官方原文字幕时，以其原文正文和事件顺序为冻结基准，以逐条起止时间为初始时间轴。已有可用官方中文时直接采用；仅在缺少可用中文、需要网易云参考时查询前5个候选，综合歌名、艺人、原文正文相似度、总条数、重复句顺序和整段相对时段匹配现成中文。网易云绝对时间不得直接覆盖现场版时间，只用于匹配重复段落和提示相对时段偏移；真正的早起或晚起必须结合实际演唱或独立音频对齐确认
 
 ```powershell
 python -B $pipeline official-subtitle-prepare --mv-dir $mvDir
+# 缺少可用中文、需要网易云参考时才加--reference-netease
 ```
 
-命令生成冻结基准`source-cues.tsv`、可审定工作表`translation.tsv`和精简输入`chinese.tsv`，同时取得`lyrics/original.lrc`、`lyrics/chinese.lrc`、`lyrics/lookup.md`以及`netease-match.tsv`、`netease-match.md`、`netease-chinese.tsv`。高置信网易云中文自动预填到空白`chinese.tsv`，不会覆盖已有人工中文；`netease-chinese.tsv`始终单独保留完整匹配结果，已有人工中文时可逐行对比或显式作为`--translations`输入。已有官方工序文件时只刷新网易云参考可运行：
+命令生成冻结基准`source-cues.tsv`、可审定工作表`translation.tsv`和精简输入`chinese.tsv`，默认不发起网易云查询。显式加`--reference-netease`时才取得`lyrics/original.lrc`、`lyrics/chinese.lrc`、`lyrics/lookup.md`以及`netease-match.tsv`、`netease-match.md`、`netease-chinese.tsv`。高置信网易云中文自动预填到空白`chinese.tsv`，不会覆盖已有人工中文；`netease-chinese.tsv`始终单独保留完整匹配结果，已有人工中文时可逐行对比或显式作为`--translations`输入。已有官方工序文件时只刷新网易云参考可运行：
 
 ```powershell
 python -B $pipeline official-subtitle-reference --mv-dir $mvDir

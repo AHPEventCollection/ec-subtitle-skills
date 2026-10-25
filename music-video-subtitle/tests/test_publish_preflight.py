@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from publish_preflight import Post, check_chapter_comment, check_posts, check_production_credit, check_title_preference, parse_copy, preflight, resolve_copy  # noqa: E402
+from publish_preflight import Post, check_posts, check_title_preference, parse_copy, preflight, resolve_copy  # noqa: E402
 
 
 class PublishPreflightTests(unittest.TestCase):
@@ -23,52 +23,29 @@ class PublishPreflightTests(unittest.TestCase):
                 self.assertEqual(post.tags, "音乐")
                 self.assertEqual(post.chapter_comment, chapters)
                 self.assertEqual(post.publishing_notes, "章节尚未保存")
-                self.assertEqual(check_chapter_comment(chapters), [])
-                self.assertEqual(check_production_credit(post.body), [])
 
-    def test_credit_allows_omitted_statistics_but_rejects_internal_failure_notes(self):
-        body = "使用模型：测试模型\n使用技能：ec-subtitle-skills"
-        self.assertEqual(check_production_credit(body), [])
-        self.assertEqual(len(check_production_credit("正文")), 2)
-        self.assertTrue(check_production_credit(body.replace("ec-subtitle-skills", "另一个技能")))
-        for extra in ("Token用量：未取得（本任务未提供用量记录）", "制作耗时：未取得（没有起止记录）",
-                      "制作耗时：本次成片阶段108.565秒，含压制与机器检查",
-                      "使用模型：测试模型；原工程模型记录未取得"):
-            with self.subTest(extra=extra):
-                candidate = body.replace("使用模型：测试模型", extra) if extra.startswith("使用模型") else body + "\n" + extra
-                self.assertTrue(check_production_credit(candidate))
-        self.assertEqual(check_production_credit(body + "\nToken用量：12000（本次修订）\n制作耗时：18分钟"), [])
-
-    def test_chapter_text_requires_opening_ending_and_ordered_times(self):
-        self.assertEqual(check_chapter_comment("00:00 开场\n01:02:03 结束"), [])
-        for text in ("", "00:01 开场\n01:00 结束", "00:00 开场", "00:00 开场\n00:00 结束",
-                     "00:00 开场\n02:00 歌曲\n01:00 结束", "00:00 开场\n01:60 结束",
-                     "00:00 开场\n01:60:00 结束", "00:00 开场\n待确认 结束"):
-            with self.subTest(text=text):
-                self.assertTrue(check_chapter_comment(text))
-
-    def test_preflight_reminds_each_platform_without_mutating_or_claiming_saved(self):
+    def test_mv_preflight_has_no_chapter_or_production_statistics_gate(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "fixture"
             (root / "output").mkdir(parents=True)
             (root / "output/fixture.hardsub.v01.mp4").write_bytes(b"test video")
             (root / "output/fixture.cover.v01.jpg").write_bytes(b"test cover")
             copy = root / "output/fixture.publish-copy.v01.md"
-            credit = ("使用模型：测试模型\nToken用量：12000"
-                      "\n制作耗时：1分钟\n使用技能：ec-subtitle-skills")
-            text = "\n".join(f"## {platform}\n标题：标题\n\n正文\n{credit}\n\n章节评论：\n00:00 开场\n03:00 结束\n"
-                             for platform in ("微博", "小红书", "B站"))
-            copy.write_text(text, encoding="utf-8")
-            issues: list[str] = []
-            report = preflight(root, issues_out=issues)
-            self.assertEqual(issues, [])
-            self.assertEqual(report.count("章节提醒："), 3)
-            self.assertEqual(report.count("文案就绪不代表平台章节已保存或评论已发送"), 3)
-            self.assertEqual(copy.read_text(encoding="utf-8"), text)
-            copy.write_text(text.replace("03:00 结束", "03:00 歌曲"), encoding="utf-8")
-            issues.clear()
-            preflight(root, issues_out=issues)
-            self.assertEqual(len(issues), 3)
+            for metadata in ("", "\nToken用量：\n制作耗时：未取得",
+                             "\n章节评论：\n旧稿人工保留文字"):
+                with self.subTest(metadata=metadata):
+                    text = "\n".join(
+                        f"## {platform}\n标题：标题\n正文：人工正文{metadata}\n"
+                        for platform in ("微博", "小红书", "B站", "视频号")
+                    )
+                    copy.write_text(text, encoding="utf-8")
+                    issues: list[str] = []
+                    report = preflight(root, issues_out=issues)
+                    self.assertEqual(issues, [])
+                    self.assertNotIn("章节提醒", report)
+                    self.assertNotIn("章节评论", report)
+                    self.assertNotIn("制作署名缺少", report)
+                    self.assertEqual(copy.read_text(encoding="utf-8"), text)
 
     def test_mv_template_extracts_original_video_without_changing_body(self):
         text = """## B站

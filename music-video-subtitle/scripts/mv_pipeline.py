@@ -167,8 +167,7 @@ def download_source(
             ]
         ),
     )
-    if prepare_official_subtitle_if_present(mv_dir) is not None:
-        acquire_official_lyrics_reference(mv_dir)
+    prepare_official_subtitle_if_present(mv_dir)
     return media
 
 
@@ -198,9 +197,12 @@ def prepare_official_route(
     mv_dir: Path,
     subtitle: Path | None = None,
     cookie_file: Path | None = None,
+    *,
+    reference_netease: bool = False,
 ) -> Path:
     translation = prepare_official_subtitle(mv_dir, subtitle)
-    acquire_official_lyrics_reference(mv_dir, cookie_file)
+    if reference_netease:
+        acquire_official_lyrics_reference(mv_dir, cookie_file)
     return translation
 
 
@@ -913,10 +915,21 @@ def _copy_ready(
 ) -> bool:
     if not path.is_file():
         return False
+    from publish_preflight import check_title_preference, parse_copy
+
     text = path.read_text(encoding="utf-8-sig").strip()
+    publish_text = re.sub(
+        r"(?ms)^章节评论：.*?(?=^(?:标题|正文|话题|标签|原视频|转载链接|上一篇笔记ID|发布备注)：|^##\s|\Z)",
+        "", text,
+    )
+    # Statistics and production credits follow the editorial standard, not a
+    # delivery gate. Legacy chapter metadata is ignored without changing the file.
+    publish_text = re.sub(
+        r"(?m)^(?:使用模型|Token用量|制作耗时|使用技能)：[^\r\n]*$", "", publish_text,
+    )
     if (
         len(text) < 80
-        or any(marker in text for marker in COPY_PLACEHOLDERS)
+        or any(marker in publish_text for marker in COPY_PLACEHOLDERS)
         or not all(section in text for section in sections)
     ):
         return False
@@ -928,8 +941,6 @@ def _copy_ready(
         body_end = positions[index + 1][0] if index + 1 < len(positions) else len(text)
         if source_credit not in text[body_start:body_end]:
             return False
-    from publish_preflight import check_title_preference, parse_copy
-
     return not check_title_preference(mv_dir or path.parent.parent, parse_copy(text))
 
 
@@ -1194,6 +1205,10 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("--mv-dir", required=True, type=Path)
     import_parser.add_argument("--source", required=True, type=Path)
 
+    waveform_parser = subparsers.add_parser("waveform", help="生成预览视频同时间基准的编辑器波形")
+    waveform_parser.add_argument("--mv-dir", required=True, type=Path)
+    waveform_parser.add_argument("--refresh", action="store_true", help="核对片源后重新生成现有波形")
+
     lyrics_parser = subparsers.add_parser("lyrics")
     lyrics_parser.add_argument("--mv-dir", required=True, type=Path)
     lyrics_parser.add_argument("--netease-cookie-file", type=Path)
@@ -1202,6 +1217,10 @@ def build_parser() -> argparse.ArgumentParser:
     official_prepare_parser.add_argument("--mv-dir", required=True, type=Path)
     official_prepare_parser.add_argument("--subtitle", type=Path)
     official_prepare_parser.add_argument("--netease-cookie-file", type=Path)
+    official_prepare_parser.add_argument(
+        "--reference-netease", action="store_true",
+        help="缺少可用中文、需要网易云参考时才查询；已有官方中文时不传入",
+    )
 
     official_reference_parser = subparsers.add_parser("official-subtitle-reference")
     official_reference_parser.add_argument("--mv-dir", required=True, type=Path)
@@ -1340,6 +1359,7 @@ def main(argv: list[str] | None = None) -> int:
         "structure-rhythm": ("media", "base"),
         "build-subtitle": ("media", "base"),
         "import-source": ("media", "base"),
+        "waveform": ("media", "base"),
         "style": ("media", "base"),
         "preview": ("media", "base"),
         "finish": ("media", "base"),
@@ -1348,7 +1368,6 @@ def main(argv: list[str] | None = None) -> int:
         "stage-delivery": ("media", "base"),
         "delivery-status": ("media", "base"),
         "delivery-check": ("media", "base"),
-        "archive": ("media", "base"),
     }.get(args.action)
     if route:
         dispatched = dispatch_script_in_profile(
@@ -1372,6 +1391,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.action == "import-source":
             result = import_source(args.mv_dir, args.source)
+        elif args.action == "waveform":
+            from waveform import generate_preview_waveform
+
+            result = generate_preview_waveform(args.mv_dir, refresh=args.refresh)
         elif args.action == "lyrics":
             result = acquire_lyrics(args.mv_dir, args.netease_cookie_file)
         elif args.action == "official-subtitle-prepare":
@@ -1379,6 +1402,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.mv_dir,
                 args.subtitle,
                 args.netease_cookie_file,
+                reference_netease=args.reference_netease,
             )
         elif args.action == "official-subtitle-reference":
             result = acquire_official_lyrics_reference(
